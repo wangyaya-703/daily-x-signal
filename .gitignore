@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+output/
+state/*.json
+state/*.md
+state/*.lock
+config/local.yaml
+.env.local
+!.gitkeep

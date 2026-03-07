@@ -1,0 +1,132 @@
+profile:
+  timezone: Asia/Shanghai
+  default_mode: all_following
+  digest_top_n: 10
+  review_pick_count: 1
+
+x:
+  viewer_handle: null
+  viewer_user_id: null
+  fallback_to_home_timeline: true
+  following_sync_max_pages: 2
+  max_authors_per_run: 40
+  max_active_authors_per_run: 12
+  tweets_pages_per_author: 1
+  include_replies: true
+  reply_like_threshold: 100
+  thread_fetch_top_n: 12
+  min_post_length: 20
+  dedupe_by_conversation: true
+
+topics:
+  ai_coding:
+    weight: 1.0
+    keywords:
+      - ai coding
+      - claude code
+      - openclaw
+      - codex
+      - cursor
+      - windsurf
+      - coding agent
+      - code agent
+      - software engineering
+      - dev tool
+      - mcp
+      - skill
+      - skills
+  agent_frameworks:
+    weight: 1.0
+    keywords:
+      - agent
+      - multi agent
+      - orchestration
+      - workflow
+      - framework
+      - autogen
+      - langgraph
+      - crewai
+      - smolagents
+      - agno
+      - tool calling
+  model_releases:
+    weight: 0.95
+    keywords:
+      - model
+      - gpt
+      - claude
+      - gemini
+      - qwen
+      - kimi
+      - deepseek
+      - release
+      - launch
+      - benchmark
+      - inference
+  papers_algorithms:
+    weight: 0.9
+    keywords:
+      - paper
+      - arxiv
+      - algorithm
+      - research
+      - transformer
+      - reasoning
+      - reinforcement learning
+      - diffusion
+      - llm
+      - rlhf
+
+ranking:
+  weights:
+    topic_relevance: 0.35
+    substance: 0.35
+    social_signal: 0.20
+    author_signal: 0.10
+  max_posts_per_author: 2
+  penalties:
+    too_short: 0.20
+    pure_link: 0.10
+    obvious_noise: 0.40
+
+core_authors:
+  enabled: true
+  mode_default_limit: 30
+  history_window_days: 14
+  min_runs_before_activation: 3
+  scoring:
+    selected_runs: 0.40
+    avg_priority: 0.30
+    avg_topic_relevance: 0.20
+    avg_signal: 0.10
+
+llm:
+  enabled: true
+  provider: openai_compatible
+  api_style: responses
+  model: gpt-5.4
+  base_url: https://api.openai.com/v1
+  api_key_env: DAILY_X_SIGNAL_API_KEY
+  temperature: 0.2
+  max_input_posts: 12
+  request_timeout_sec: 120
+
+outputs:
+  local:
+    enabled: true
+    directory: output
+  feishu:
+    enabled: false
+    delivery_type: webhook
+    webhook_url: null
+    bot_webhook_env: DAILY_X_SIGNAL_FEISHU_WEBHOOK
+    app_id: null
+    app_secret: null
+    app_id_env: FEISHU_APP_ID
+    app_secret_env: FEISHU_APP_SECRET
+    receive_id: null
+    receive_id_env: DAILY_X_SIGNAL_FEISHU_RECEIVE_ID
+    receive_id_type: open_id
+    preview_directory: output/feishu-preview
+    card_theme: blue
+    mention_all: false

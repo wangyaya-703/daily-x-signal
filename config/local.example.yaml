@@ -1,0 +1,21 @@
+x:
+  viewer_handle: your_x_handle
+  viewer_user_id: "your_x_user_id"
+
+llm:
+  enabled: true
+  provider: openai_compatible
+  api_style: responses
+  model: gpt-5.4
+  base_url: https://api.openai.com/v1
+  api_key: your-local-api-key
+  api_key_env: DAILY_X_SIGNAL_API_KEY
+
+outputs:
+  feishu:
+    enabled: true
+    delivery_type: app
+    app_id_env: FEISHU_APP_ID
+    app_secret_env: FEISHU_APP_SECRET
+    receive_id_env: DAILY_X_SIGNAL_FEISHU_RECEIVE_ID
+    receive_id_type: email
