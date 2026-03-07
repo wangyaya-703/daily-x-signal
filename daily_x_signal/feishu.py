@@ -12,7 +12,8 @@ from .store import save_json
 
 def build_feishu_card(report: Report, config: dict[str, Any]) -> dict[str, Any]:
     theme = config["outputs"]["feishu"].get("card_theme", "blue")
-    top_posts = report.top_posts[: min(len(report.top_posts), 5)]
+    top_n = int(config["outputs"]["feishu"].get("top_n", 10))
+    top_posts = report.top_posts[: min(len(report.top_posts), top_n)]
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
@@ -36,7 +37,7 @@ def build_feishu_card(report: Report, config: dict[str, Any]) -> dict[str, Any]:
                 },
             ]
         )
-    elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": "**Top 5 摘要**"}])
+    elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": f"**Top {len(top_posts)} 摘要**"}])
     for idx, post in enumerate(top_posts, start=1):
         lines = [
             f"**#{idx} @{post.author.handle}**",

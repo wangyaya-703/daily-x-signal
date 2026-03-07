@@ -15,6 +15,7 @@ outputs:
   feishu:
     enabled: true
     delivery_type: app
+    top_n: 10
     app_id_env: FEISHU_APP_ID
     app_secret_env: FEISHU_APP_SECRET
     receive_id_env: DAILY_X_SIGNAL_FEISHU_RECEIVE_ID

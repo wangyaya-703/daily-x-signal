@@ -118,6 +118,7 @@ outputs:
   feishu:
     enabled: false
     delivery_type: webhook
+    top_n: 10
     webhook_url: null
     bot_webhook_env: DAILY_X_SIGNAL_FEISHU_WEBHOOK
     app_id: null
