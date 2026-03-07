@@ -46,3 +46,41 @@ daily-x-signal show-core-authors
 - LLM 支持 OpenAI 兼容接口、自定义 `base_url`、`api_key` 或 `api_key_env`
 - 飞书推送配置放在 `outputs.feishu`
 - 真实账号信息和密钥应只保存在 `config/local.yaml`
+
+## 依赖与前置条件
+
+- 需要本机已安装 `python3.11`
+- 需要本机已安装 `xreach`
+- 如需 LLM 摘要，需要配置 `llm.api_key` 或 `llm.api_key_env`
+- 如需飞书推送，需要额外配置飞书 App 凭证和接收目标
+
+## 关于 X 登录态 / Cookies
+
+安装这个 Skill 并不会自动获取 X/Twitter 的第三方登录 cookies，也不会自动从浏览器继承登录态。
+
+你必须先在本机单独完成 `xreach` 认证，例如：
+
+```bash
+xreach auth extract --browser chrome
+```
+
+或：
+
+```bash
+xreach auth set --auth-token '你的_auth_token' --ct0 '你的_ct0'
+```
+
+只有在 `xreach auth check` 正常后，这个 Skill 才能稳定读取：
+
+- 关注列表
+- Home timeline
+- 账号 tweets
+- thread 内容
+
+## 如果依赖其他插件 / 服务
+
+- 飞书：需要 `FEISHU_APP_ID`、`FEISHU_APP_SECRET` 和接收目标
+- LLM：需要 OpenAI 兼容接口配置
+- 浏览器 Cookie 提取：依赖 `xreach` 自身认证能力，而不是这个 Skill 自动完成
+
+使用这个 Skill 时，要先确认依赖工具和认证链路已经完成，再开始生成日报。

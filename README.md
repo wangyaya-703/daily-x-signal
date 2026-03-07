@@ -23,6 +23,48 @@
 - 支持飞书 Webhook 或飞书 App 方式推送
 - 支持 GPT-5.4 或任意 OpenAI 兼容接口
 
+## 依赖与认证
+
+运行这个项目，至少需要下面这些依赖：
+
+- `python3.11`
+- `xreach` CLI
+- `requests`、`PyYAML`（安装项目时会自动带上）
+
+### 关于 X / Twitter 登录态
+
+仅仅安装这个 Skill 或仓库，并不会自动获得你的 X 登录态，也不会自动帮你拿到浏览器 cookies。
+
+你必须额外完成一次 `xreach` 认证，常见方式有：
+
+```bash
+xreach auth extract --browser chrome
+```
+
+或者手动设置：
+
+```bash
+xreach auth set --auth-token '你的_auth_token' --ct0 '你的_ct0'
+```
+
+如果没有可用的 X 登录态：
+
+- `home timeline`
+- `following`
+- `tweets`
+
+这些依赖登录态的能力都会失败，日报质量也会明显下降。
+
+### 关于飞书
+
+如果你要启用飞书推送，还需要额外准备：
+
+- 飞书 App 的 `app_id`
+- 飞书 App 的 `app_secret`
+- 一个有效的接收目标，例如 `email` / `open_id` / `chat_id`
+
+项目本身不会替你创建飞书机器人，也不会自动推断你的接收目标。
+
 ## 快速开始
 
 ```bash
@@ -100,6 +142,36 @@ outputs:
     receive_id_type: email
 ```
 
+## 验证方式
+
+### 1. 验证 X 认证
+
+```bash
+xreach auth check
+daily-x-signal sync-authors --override-config config/local.yaml
+```
+
+### 2. 验证 LLM
+
+```bash
+daily-x-signal generate --window-mode rolling_24h --top-n 10 --override-config config/local.yaml
+```
+
+生成后检查：
+
+- `output/daily-brief-YYYY-MM-DD.md`
+- `output/daily-brief-YYYY-MM-DD.json`
+
+如果 JSON 里是 `llm_enabled: true`，说明模型摘要已生效。
+
+### 3. 验证飞书
+
+生成后检查：
+
+- `output/feishu-preview/daily-brief-YYYY-MM-DD.json`
+
+如果启用了真实推送，再确认飞书里是否收到卡片。
+
 ## 常用命令
 
 生成固定窗口日报：
@@ -141,6 +213,7 @@ daily-x-signal sync-authors --override-config config/local.yaml
 - `config/local.yaml` 不会进入 Git
 - `.env.local` 不会进入 Git
 - 账号 ID、绝对本机路径、私有接收目标都不应该写进可提交文件
+- 安装 Skill 本身不会自动获取 X cookies，认证必须额外单独完成
 
 ## Skill
 
