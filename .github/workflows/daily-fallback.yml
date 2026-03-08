@@ -1,0 +1,112 @@
+name: Daily X Signal Fallback
+
+on:
+  schedule:
+    - cron: "35 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  fallback-send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 判断今天是否已由本地主链路成功发送
+        id: marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TZ: Asia/Shanghai
+        run: |
+          TODAY="$(TZ=Asia/Shanghai date +%F)"
+          LAST_SUCCESS_DATE="$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LAST_DAILY_X_SIGNAL_SUCCESS_DATE" --jq .value 2>/dev/null || true)"
+          echo "today=${TODAY}" >> "$GITHUB_OUTPUT"
+          echo "last_success_date=${LAST_SUCCESS_DATE}" >> "$GITHUB_OUTPUT"
+          if [ "$LAST_SUCCESS_DATE" = "$TODAY" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "本地主链路今天已经成功发送，跳过 GitHub Actions 兜底。"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "今天还没有成功标记，继续执行 GitHub Actions 兜底补发。"
+          fi
+
+      - name: 安装项目依赖
+        if: steps.marker.outputs.should_run == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          npm install -g xreach-cli
+
+      - name: 配置 X 登录态
+        if: steps.marker.outputs.should_run == 'true'
+        env:
+          X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
+          X_CT0: ${{ secrets.X_CT0 }}
+        run: |
+          xreach auth set --auth-token "$X_AUTH_TOKEN" --ct0 "$X_CT0"
+
+      - name: 生成 GitHub Actions 私有配置
+        if: steps.marker.outputs.should_run == 'true'
+        env:
+          VIEWER_HANDLE: ${{ secrets.DAILY_X_SIGNAL_VIEWER_HANDLE }}
+          VIEWER_USER_ID: ${{ secrets.DAILY_X_SIGNAL_VIEWER_USER_ID }}
+          LLM_BASE_URL: ${{ secrets.DAILY_X_SIGNAL_BASE_URL }}
+        run: |
+          mkdir -p config
+          cat > config/github-actions.local.yaml <<EOF
+          x:
+            viewer_handle: ${VIEWER_HANDLE}
+            viewer_user_id: "${VIEWER_USER_ID}"
+          llm:
+            enabled: true
+            provider: openai_compatible
+            api_style: responses
+            model: gpt-5.4
+            base_url: ${LLM_BASE_URL:-https://api.openai.com/v1}
+            api_key_env: DAILY_X_SIGNAL_API_KEY
+          outputs:
+            feishu:
+              enabled: true
+              delivery_type: app
+              app_id_env: FEISHU_APP_ID
+              app_secret_env: FEISHU_APP_SECRET
+              receive_id_env: DAILY_X_SIGNAL_FEISHU_RECEIVE_ID
+              receive_id_type: email
+          EOF
+
+      - name: 生成并补发日报
+        if: steps.marker.outputs.should_run == 'true'
+        env:
+          DAILY_X_SIGNAL_API_KEY: ${{ secrets.DAILY_X_SIGNAL_API_KEY }}
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          DAILY_X_SIGNAL_FEISHU_RECEIVE_ID: ${{ secrets.DAILY_X_SIGNAL_FEISHU_RECEIVE_ID }}
+        run: |
+          daily-x-signal generate --window-mode scheduled --override-config config/github-actions.local.yaml
+
+      - name: 回写 GitHub 成功标记
+        if: steps.marker.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TZ: Asia/Shanghai
+        run: |
+          TODAY="$(TZ=Asia/Shanghai date +%F)"
+          NOW="$(TZ=Asia/Shanghai date --iso-8601=seconds)"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LAST_DAILY_X_SIGNAL_SUCCESS_DATE" --method PATCH -f name=LAST_DAILY_X_SIGNAL_SUCCESS_DATE -f value="$TODAY" >/dev/null 2>&1 || \
+          gh api "repos/${GITHUB_REPOSITORY}/actions/variables" --method POST -f name=LAST_DAILY_X_SIGNAL_SUCCESS_DATE -f value="$TODAY"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LAST_DAILY_X_SIGNAL_SUCCESS_AT" --method PATCH -f name=LAST_DAILY_X_SIGNAL_SUCCESS_AT -f value="$NOW" >/dev/null 2>&1 || \
+          gh api "repos/${GITHUB_REPOSITORY}/actions/variables" --method POST -f name=LAST_DAILY_X_SIGNAL_SUCCESS_AT -f value="$NOW"

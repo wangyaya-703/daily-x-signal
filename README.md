@@ -237,6 +237,43 @@ tail -n 50 state/logs/launchd.stderr.log
 bash scripts/scheduler_tick.sh
 ```
 
+## GitHub Actions 兜底补发
+
+仓库内置了一个 GitHub Actions 工作流：
+
+- 文件位置：`.github/workflows/daily-fallback.yml`
+- 触发时间：每天北京时间 `11:35`
+- 作用：只在本地主链路当天没有成功发送时，才执行一次云端补发
+
+它的工作机制是：
+
+- 本地 `launchd` 成功发送后，会自动回写两个 GitHub Actions 仓库变量
+  - `LAST_DAILY_X_SIGNAL_SUCCESS_DATE`
+  - `LAST_DAILY_X_SIGNAL_SUCCESS_AT`
+- GitHub Actions 到 `11:35` 先检查这两个变量
+- 如果今天已经成功发送，直接跳过
+- 如果今天还没有成功标记，再用云端 Secrets 补发一次
+
+### 需要配置的 GitHub Secrets
+
+- `X_AUTH_TOKEN`
+- `X_CT0`
+- `DAILY_X_SIGNAL_VIEWER_HANDLE`
+- `DAILY_X_SIGNAL_VIEWER_USER_ID`
+- `DAILY_X_SIGNAL_BASE_URL`
+- `DAILY_X_SIGNAL_API_KEY`
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `DAILY_X_SIGNAL_FEISHU_RECEIVE_ID`
+
+说明：
+
+- `GitHub Actions` 只建议做兜底，不建议替代本地 `launchd`
+- 如果你不希望把 X 登录态同步到 GitHub Secrets，可以只保留本地主链路，不启用云端补发
+- 本地主链路回写的是两个“是否成功发送”的仓库变量，不包含你的敏感内容
+  - `LAST_DAILY_X_SIGNAL_SUCCESS_DATE`
+  - `LAST_DAILY_X_SIGNAL_SUCCESS_AT`
+
 ## 输出文件
 
 - Markdown 日报：`output/daily-brief-YYYY-MM-DD.md`

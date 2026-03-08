@@ -12,6 +12,13 @@ scheduler:
   catchup_deadline_minute: 30
   poll_interval_minutes: 15
 
+github_fallback:
+  enabled: true
+  owner: wangyaya-703
+  repo: daily-x-signal
+  success_date_variable: LAST_DAILY_X_SIGNAL_SUCCESS_DATE
+  success_at_variable: LAST_DAILY_X_SIGNAL_SUCCESS_AT
+
 x:
   viewer_handle: null
   viewer_user_id: null

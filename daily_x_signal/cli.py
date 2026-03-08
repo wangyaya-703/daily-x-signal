@@ -18,6 +18,7 @@ from .collector import (
 )
 from .core_authors import author_stats_from_history, build_core_pool, load_history, save_history, update_history
 from .feishu import deliver_feishu
+from .github_fallback import sync_success_marker
 from .llm import LLMClient, apply_llm_summary, extract_llm_watchlist
 from .models import Report
 from .report import fallback_enrich, write_outputs
@@ -226,8 +227,14 @@ def cmd_schedule_tick(args: argparse.Namespace, config: dict, client: XReachClie
         )
         if not success:
             raise RuntimeError("日报已生成，但飞书发送未成功。")
+        marker_result = sync_success_marker(
+            config,
+            digest_date=report.window_end.date().isoformat(),
+            sent_at=report.generated_at.isoformat(),
+        )
         print(f"Scheduled digest sent for {report.window_end.date().isoformat()}")
         print(f"Feishu status: {feishu_status}")
+        print(f"GitHub fallback marker: {marker_result['reason']}")
         return 0
     except Exception as exc:
         latest_state = load_scheduler_state(SCHEDULER_STATE_PATH)
