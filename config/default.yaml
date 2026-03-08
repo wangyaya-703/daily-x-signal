@@ -4,6 +4,14 @@ profile:
   digest_top_n: 10
   review_pick_count: 1
 
+scheduler:
+  enabled: true
+  trigger_hour: 8
+  trigger_minute: 30
+  catchup_deadline_hour: 11
+  catchup_deadline_minute: 30
+  poll_interval_minutes: 15
+
 x:
   viewer_handle: null
   viewer_user_id: null

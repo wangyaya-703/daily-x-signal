@@ -180,6 +180,12 @@ daily-x-signal generate --window-mode rolling_24h --top-n 10 --override-config c
 daily-x-signal generate --override-config config/local.yaml
 ```
 
+调度补偿检查：
+
+```bash
+daily-x-signal schedule-tick --override-config config/local.yaml
+```
+
 生成过去 24 小时报：
 
 ```bash
@@ -198,6 +204,39 @@ daily-x-signal show-core-authors
 daily-x-signal sync-authors --override-config config/local.yaml
 ```
 
+## launchd 生产调度
+
+推荐使用 macOS 的 `launchd` 作为生产调度器，而不是手工挂一个终端窗口。当前项目采用的是“轮询补偿 + 防重复发送”的模式：
+
+- `launchd` 每 `15` 分钟触发一次
+- 真正是否发送，由 `schedule-tick` 判断
+- 每天 `08:30` 之后进入可发送窗口
+- 如果 `08:30` 因为睡眠、断网或临时错误错过，会在 `11:30` 前自动补发
+- 如果当天已经成功发送过，会自动跳过，避免重复推送
+
+安装方式：
+
+```bash
+bash scripts/install_launchd.sh
+```
+
+如果你的飞书接收目标、飞书 App 凭证或模型密钥仍然是通过环境变量提供，推荐把这些变量写进项目根目录的私有 `.env.local`，而不是依赖日常 shell 配置。`launchd` 会优先读取这个文件。
+
+安装完成后，可用下面命令检查：
+
+```bash
+launchctl print gui/$(id -u)/com.wangyaya.daily-x-signal
+cat state/scheduler_state.json
+tail -n 50 state/logs/launchd.stdout.log
+tail -n 50 state/logs/launchd.stderr.log
+```
+
+如果你只想手动触发一次调度逻辑，而不是直接生成日报，可执行：
+
+```bash
+bash scripts/scheduler_tick.sh
+```
+
 ## 输出文件
 
 - Markdown 日报：`output/daily-brief-YYYY-MM-DD.md`
@@ -206,6 +245,8 @@ daily-x-signal sync-authors --override-config config/local.yaml
 - 关注缓存：`state/following_cache.json`
 - 历史统计：`state/history.json`
 - 重点作者池：`state/core_authors.json`
+- 调度状态：`state/scheduler_state.json`
+- 调度日志：`state/logs/`
 
 ## 公开仓安全说明
 

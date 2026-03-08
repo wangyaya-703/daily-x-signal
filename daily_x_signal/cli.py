@@ -21,6 +21,7 @@ from .feishu import deliver_feishu
 from .llm import LLMClient, apply_llm_summary, extract_llm_watchlist
 from .models import Report
 from .report import fallback_enrich, write_outputs
+from .scheduler import load_scheduler_state, record_scheduler_result, should_run_scheduler
 from .scoring import rank_posts, suggested_authors
 from .store import load_json, save_json
 from .window import resolve_window
@@ -31,17 +32,19 @@ DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "config" / "default.yaml"
 STATE_PATH = Path(__file__).resolve().parents[1] / "state" / "history.json"
 FOLLOWING_CACHE_PATH = Path(__file__).resolve().parents[1] / "state" / "following_cache.json"
 CORE_POOL_PATH = Path(__file__).resolve().parents[1] / "state" / "core_authors.json"
+SCHEDULER_STATE_PATH = Path(__file__).resolve().parents[1] / "state" / "scheduler_state.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="daily-x-signal")
-    parser.add_argument("command", choices=["generate", "sync-authors", "show-core-authors"])
+    parser.add_argument("command", choices=["generate", "sync-authors", "show-core-authors", "schedule-tick"])
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--override-config")
     parser.add_argument("--window-mode", choices=["scheduled", "rolling_24h"], default="scheduled")
     parser.add_argument("--mode", choices=["all_following", "core_authors"], default=None)
     parser.add_argument("--top-n", type=int)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true")
     return parser
 
 
@@ -64,7 +67,7 @@ def cmd_show_core_authors(config: dict) -> int:
     return 0
 
 
-def cmd_generate(args: argparse.Namespace, config: dict, client: XReachClient) -> int:
+def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient) -> dict[str, object]:
     history = load_history(STATE_PATH)
     author_stats = author_stats_from_history(history)
     following_cache = load_json(FOLLOWING_CACHE_PATH, {"authors": []})
@@ -134,8 +137,12 @@ def cmd_generate(args: argparse.Namespace, config: dict, client: XReachClient) -
     )
 
     if args.dry_run:
-        print(json.dumps({"top_post_urls": [post.url for post in top_posts], "must_read": must_read.url if must_read else None}, ensure_ascii=False, indent=2))
-        return 0
+        return {
+            "dry_run": True,
+            "top_post_urls": [post.url for post in top_posts],
+            "must_read_url": must_read.url if must_read else None,
+            "report": report,
+        }
 
     md_path, json_path = write_outputs(report, config)
     history = update_history(history, top_posts, report.generated_at)
@@ -143,14 +150,98 @@ def cmd_generate(args: argparse.Namespace, config: dict, client: XReachClient) -
     core_pool = build_core_pool(history, config)
     save_json(CORE_POOL_PATH, {"generated_at": report.generated_at.isoformat(), "authors": core_pool})
     feishu_preview_path, feishu_status = deliver_feishu(report, config)
+    return {
+        "report": report,
+        "md_path": md_path,
+        "json_path": json_path,
+        "feishu_preview_path": feishu_preview_path,
+        "feishu_status": feishu_status,
+        "core_pool_size": len(core_pool),
+    }
+
+
+def cmd_generate(args: argparse.Namespace, config: dict, client: XReachClient) -> int:
+    result = generate_digest(args, config, client)
+    if result.get("dry_run"):
+        print(
+            json.dumps(
+                {
+                    "top_post_urls": result.get("top_post_urls", []),
+                    "must_read": result.get("must_read_url"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    md_path = result.get("md_path")
+    json_path = result.get("json_path")
+    feishu_preview_path = result.get("feishu_preview_path")
+    feishu_status = result.get("feishu_status")
     print(f"Markdown: {md_path}")
     print(f"JSON: {json_path}")
     if feishu_preview_path:
         print(f"Feishu preview: {feishu_preview_path}")
     if feishu_status:
         print(f"Feishu status: {feishu_status}")
-    print(f"Core author pool size: {len(core_pool)}")
+    print(f"Core author pool size: {result.get('core_pool_size', 0)}")
     return 0
+
+
+def cmd_schedule_tick(args: argparse.Namespace, config: dict, client: XReachClient) -> int:
+    scheduler_state = load_scheduler_state(SCHEDULER_STATE_PATH)
+    decision = should_run_scheduler(config, scheduler_state)
+    if not decision["should_run"] and not args.force:
+        print(decision["reason"])
+        return 0
+
+    scheduled_args = argparse.Namespace(
+        command="generate",
+        config=args.config,
+        override_config=args.override_config,
+        window_mode="scheduled",
+        mode=args.mode,
+        top_n=args.top_n,
+        dry_run=False,
+        force=args.force,
+    )
+    try:
+        result = generate_digest(scheduled_args, config, client)
+        report = result["report"]
+        feishu_enabled = bool(config["outputs"]["feishu"].get("enabled", False))
+        feishu_status = result.get("feishu_status")
+        success = bool(result.get("md_path")) and (not feishu_enabled or feishu_status == 200)
+        record_scheduler_result(
+            SCHEDULER_STATE_PATH,
+            digest_date=report.window_end.date().isoformat(),
+            reason=str(decision["reason"]),
+            success=success,
+            feishu_status=feishu_status if isinstance(feishu_status, int) else None,
+            metadata={
+                "window_end": report.window_end.isoformat(),
+                "markdown_path": str(result.get("md_path") or ""),
+                "json_path": str(result.get("json_path") or ""),
+            },
+        )
+        if not success:
+            raise RuntimeError("日报已生成，但飞书发送未成功。")
+        print(f"Scheduled digest sent for {report.window_end.date().isoformat()}")
+        print(f"Feishu status: {feishu_status}")
+        return 0
+    except Exception as exc:
+        latest_state = load_scheduler_state(SCHEDULER_STATE_PATH)
+        sent_dates = latest_state.get("sent_dates", {})
+        if str(decision["digest_date"]) in sent_dates:
+            raise
+        record_scheduler_result(
+            SCHEDULER_STATE_PATH,
+            digest_date=str(decision["digest_date"]),
+            reason=str(decision["reason"]),
+            success=False,
+            metadata={"error": str(exc)},
+        )
+        raise
 
 
 def main() -> int:
@@ -163,6 +254,8 @@ def main() -> int:
         return cmd_sync_authors(config, client)
     if args.command == "show-core-authors":
         return cmd_show_core_authors(config)
+    if args.command == "schedule-tick":
+        return cmd_schedule_tick(args, config, client)
     return cmd_generate(args, config, client)
 
 

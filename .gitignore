@@ -6,6 +6,7 @@ output/
 state/*.json
 state/*.md
 state/*.lock
+state/logs/
 config/local.yaml
 .env.local
 !.gitkeep
