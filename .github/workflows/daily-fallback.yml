@@ -51,8 +51,33 @@ jobs:
           python -m pip install -e .
           npm install -g xreach-cli
 
-      - name: 配置 X 登录态
+      - name: 检查兜底凭证是否齐全
         if: steps.marker.outputs.should_run == 'true'
+        id: ready
+        env:
+          X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
+          X_CT0: ${{ secrets.X_CT0 }}
+          DAILY_X_SIGNAL_API_KEY: ${{ secrets.DAILY_X_SIGNAL_API_KEY }}
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          DAILY_X_SIGNAL_FEISHU_RECEIVE_ID: ${{ secrets.DAILY_X_SIGNAL_FEISHU_RECEIVE_ID }}
+        run: |
+          MISSING=""
+          for NAME in X_AUTH_TOKEN X_CT0 DAILY_X_SIGNAL_API_KEY FEISHU_APP_ID FEISHU_APP_SECRET DAILY_X_SIGNAL_FEISHU_RECEIVE_ID; do
+            if [ -z "${!NAME}" ]; then
+              MISSING="${MISSING} ${NAME}"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "missing=$(echo "$MISSING" | xargs)" >> "$GITHUB_OUTPUT"
+            echo "GitHub Actions 兜底跳过，缺少必要 Secrets: $(echo "$MISSING" | xargs)"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 配置 X 登录态
+        if: steps.marker.outputs.should_run == 'true' && steps.ready.outputs.ready == 'true'
         env:
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
           X_CT0: ${{ secrets.X_CT0 }}
@@ -60,17 +85,12 @@ jobs:
           xreach auth set --auth-token "$X_AUTH_TOKEN" --ct0 "$X_CT0"
 
       - name: 生成 GitHub Actions 私有配置
-        if: steps.marker.outputs.should_run == 'true'
+        if: steps.marker.outputs.should_run == 'true' && steps.ready.outputs.ready == 'true'
         env:
-          VIEWER_HANDLE: ${{ secrets.DAILY_X_SIGNAL_VIEWER_HANDLE }}
-          VIEWER_USER_ID: ${{ secrets.DAILY_X_SIGNAL_VIEWER_USER_ID }}
-          LLM_BASE_URL: ${{ secrets.DAILY_X_SIGNAL_BASE_URL }}
+          LLM_BASE_URL: ${{ vars.DAILY_X_SIGNAL_BASE_URL }}
         run: |
           mkdir -p config
           cat > config/github-actions.local.yaml <<EOF
-          x:
-            viewer_handle: ${VIEWER_HANDLE}
-            viewer_user_id: "${VIEWER_USER_ID}"
           llm:
             enabled: true
             provider: openai_compatible
@@ -89,7 +109,7 @@ jobs:
           EOF
 
       - name: 生成并补发日报
-        if: steps.marker.outputs.should_run == 'true'
+        if: steps.marker.outputs.should_run == 'true' && steps.ready.outputs.ready == 'true'
         env:
           DAILY_X_SIGNAL_API_KEY: ${{ secrets.DAILY_X_SIGNAL_API_KEY }}
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
@@ -99,7 +119,7 @@ jobs:
           daily-x-signal generate --window-mode scheduled --override-config config/github-actions.local.yaml
 
       - name: 回写 GitHub 成功标记
-        if: steps.marker.outputs.should_run == 'true'
+        if: steps.marker.outputs.should_run == 'true' && steps.ready.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TZ: Asia/Shanghai
@@ -110,3 +130,8 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/actions/variables" --method POST -f name=LAST_DAILY_X_SIGNAL_SUCCESS_DATE -f value="$TODAY"
           gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LAST_DAILY_X_SIGNAL_SUCCESS_AT" --method PATCH -f name=LAST_DAILY_X_SIGNAL_SUCCESS_AT -f value="$NOW" >/dev/null 2>&1 || \
           gh api "repos/${GITHUB_REPOSITORY}/actions/variables" --method POST -f name=LAST_DAILY_X_SIGNAL_SUCCESS_AT -f value="$NOW"
+
+      - name: 输出跳过原因
+        if: steps.marker.outputs.should_run == 'true' && steps.ready.outputs.ready != 'true'
+        run: |
+          echo "本次 GitHub Actions 仅作为兜底检查，当前未配置完整 Secrets，已安全跳过。"

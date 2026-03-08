@@ -258,13 +258,14 @@ bash scripts/scheduler_tick.sh
 
 - `X_AUTH_TOKEN`
 - `X_CT0`
-- `DAILY_X_SIGNAL_VIEWER_HANDLE`
-- `DAILY_X_SIGNAL_VIEWER_USER_ID`
-- `DAILY_X_SIGNAL_BASE_URL`
 - `DAILY_X_SIGNAL_API_KEY`
 - `FEISHU_APP_ID`
 - `FEISHU_APP_SECRET`
 - `DAILY_X_SIGNAL_FEISHU_RECEIVE_ID`
+
+### 需要配置的 GitHub Variables
+
+- `DAILY_X_SIGNAL_BASE_URL`
 
 说明：
 
@@ -273,6 +274,7 @@ bash scripts/scheduler_tick.sh
 - 本地主链路回写的是两个“是否成功发送”的仓库变量，不包含你的敏感内容
   - `LAST_DAILY_X_SIGNAL_SUCCESS_DATE`
   - `LAST_DAILY_X_SIGNAL_SUCCESS_AT`
+- 如果 GitHub Actions 缺少必要 Secrets，它会安全跳过，不会报错失败
 
 ## 输出文件
 
