@@ -29,33 +29,17 @@ def sync_success_marker(config: dict[str, Any], digest_date: str, sent_at: str) 
 
 
 def _upsert_actions_variable(gh: str, repo_ref: str, name: str, value: str) -> None:
-    update_cmd = [
+    cmd = [
         gh,
-        "api",
-        f"repos/{repo_ref}/actions/variables/{name}",
-        "--method",
-        "PATCH",
-        "-f",
-        f"name={name}",
-        "-f",
-        f"value={value}",
+        "variable",
+        "set",
+        name,
+        "--repo",
+        repo_ref,
+        "--body",
+        value,
     ]
-    proc = subprocess.run(update_cmd, capture_output=True, text=True)
-    if proc.returncode == 0:
-        return
-
-    create_cmd = [
-        gh,
-        "api",
-        f"repos/{repo_ref}/actions/variables",
-        "--method",
-        "POST",
-        "-f",
-        f"name={name}",
-        "-f",
-        f"value={value}",
-    ]
-    create_proc = subprocess.run(create_cmd, capture_output=True, text=True)
-    if create_proc.returncode != 0:
-        message = create_proc.stderr.strip() or create_proc.stdout.strip() or proc.stderr.strip() or proc.stdout.strip()
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        message = proc.stderr.strip() or proc.stdout.strip()
         raise RuntimeError(f"GitHub Actions variable 写入失败：{message}")

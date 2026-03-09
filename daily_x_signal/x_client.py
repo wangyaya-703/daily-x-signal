@@ -14,7 +14,7 @@ class XReachError(RuntimeError):
 
 class XReachClient:
     def __init__(self, binary: str = "xreach", workdir: str | Path = ".") -> None:
-        self.binary = binary
+        self.binary = self._resolve_binary(binary)
         self.workdir = Path(workdir)
 
     def run_json(self, *args: str) -> Any:
@@ -119,3 +119,17 @@ console.log(JSON.stringify(result));
                     return candidate
 
         raise XReachError("未找到 xreach-cli 的 Node 模块目录，请确认已全局安装 xreach-cli，或设置 XREACH_CLI_ROOT。")
+
+    def _resolve_binary(self, binary: str) -> str:
+        if Path(binary).expanduser().exists():
+            return str(Path(binary).expanduser())
+
+        resolved = shutil.which(binary)
+        if resolved:
+            return resolved
+
+        fallback = Path.home() / ".npm-global" / "bin" / binary
+        if fallback.exists():
+            return str(fallback)
+
+        return binary

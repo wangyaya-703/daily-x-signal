@@ -34,7 +34,7 @@ cat >"$AGENT_PATH" <<PLIST
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>${HOME}/.npm-global/bin:${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>LANG</key>
     <string>en_US.UTF-8</string>
   </dict>
