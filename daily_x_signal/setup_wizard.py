@@ -29,6 +29,7 @@ def run_setup(
 
     print_section("Setup Target")
     print(render_table(["Item", "Value"], [["Base Config", str(base_config_path)], ["Write Target", str(target_config_path)]]))
+    print(render_table(["Flow", "What happens"], [["1", "检查依赖、认证、飞书输出条件"], ["2", "同步 following 并确认关注总数"], ["3", "根据 following + 历史结果推荐兴趣主题"], ["4", "确认输出方式与运行偏好"], ["5", "写入本地私有配置"]]))
 
     viewer_handle = _ask("X handle", str(config.get("x", {}).get("viewer_handle") or ""))
     viewer_user_id = _ask("X user id", str(config.get("x", {}).get("viewer_user_id") or ""))
@@ -79,6 +80,17 @@ def run_setup(
 
     history = load_history(history_path)
     interest_profile = build_interest_profile(config, authors, history)
+    print_section("当前画像解释")
+    print(
+        render_table(
+            ["Signal", "Value"],
+            [
+                ["画像主题", "、".join(topic_labels(interest_profile.get("top_topics", []))) or "暂无"],
+                ["建议关键词", ", ".join(interest_profile.get("keywords", [])[:8]) or "暂无"],
+                ["高命中作者", ", ".join(f"@{handle}" for handle in list(interest_profile.get("trusted_authors", {}).keys())[:5]) or "暂无"],
+            ],
+        )
+    )
     topic_choices = _topic_choices(config, interest_profile)
     print_section("兴趣建议")
     print(
@@ -95,6 +107,27 @@ def run_setup(
     extra_keywords = _split_csv(_ask("补充关键词（逗号分隔，可留空）", ""))
     disliked_keywords = _split_csv(_ask("屏蔽关键词（逗号分隔，可留空）", ",".join(config.get("profile", {}).get("disliked_keywords", []))))
     final_keywords = _dedupe([*recommended_keywords, *extra_keywords])
+
+    print_section("运行偏好")
+    current_mode = str(config.get("profile", {}).get("default_mode", "all_following"))
+    current_top_n = str(config.get("profile", {}).get("digest_top_n", 10))
+    current_include_replies = bool(config.get("x", {}).get("include_replies", True))
+    current_reply_threshold = str(config.get("x", {}).get("reply_like_threshold", 100))
+    print(
+        render_table(
+            ["Setting", "Current", "Meaning"],
+            [
+                ["default_mode", current_mode, "all_following / core_authors"],
+                ["digest_top_n", current_top_n, "每期飞书里默认展示多少条"],
+                ["include_replies", bool_text(current_include_replies), "是否纳入高质量回复"],
+                ["reply_like_threshold", current_reply_threshold, "回复进入候选池的最低点赞数"],
+            ],
+        )
+    )
+    default_mode = _ask_choice("选择默认扫描模式", ["all_following", "core_authors"], current_mode)
+    digest_top_n = _ask("日报默认展示条数", current_top_n)
+    include_replies = _ask_yes_no("是否纳入回复帖", current_include_replies)
+    reply_like_threshold = _ask("回复帖最低点赞阈值", current_reply_threshold if include_replies else "100")
 
     feishu_default = bool(config.get("outputs", {}).get("feishu", {}).get("enabled", False))
     bitable_cfg = config.get("outputs", {}).get("feishu_bitable", {})
@@ -114,16 +147,20 @@ def run_setup(
     enable_bitable = _ask_yes_no("启用飞书多维表格追踪", bool(bitable_cfg.get("enabled", False)) if bitable_ready else False)
 
     patch = {
+        "profile": {
+            "preferred_topics": selected_topics,
+            "interest_keywords": final_keywords,
+            "disliked_keywords": disliked_keywords,
+            "default_mode": default_mode,
+            "digest_top_n": int(digest_top_n) if str(digest_top_n).strip().isdigit() else config.get("profile", {}).get("digest_top_n", 10),
+        },
         "x": {
             "viewer_handle": viewer_handle or None,
             "viewer_user_id": viewer_user_id or None,
             "expected_following_count": int(expected_following_count) if str(expected_following_count).strip().isdigit() else None,
             "following_count_confirmed": following_confirmed,
-        },
-        "profile": {
-            "preferred_topics": selected_topics,
-            "interest_keywords": final_keywords,
-            "disliked_keywords": disliked_keywords,
+            "include_replies": include_replies,
+            "reply_like_threshold": int(reply_like_threshold) if str(reply_like_threshold).strip().isdigit() else config.get("x", {}).get("reply_like_threshold", 100),
         },
         "outputs": {
             "feishu": {
@@ -148,6 +185,10 @@ def run_setup(
                 ["preferred_topics", "、".join(topic_labels(final_override.get("profile", {}).get("preferred_topics", [])))],
                 ["interest_keywords", ", ".join(final_override.get("profile", {}).get("interest_keywords", []))],
                 ["disliked_keywords", ", ".join(final_override.get("profile", {}).get("disliked_keywords", []))],
+                ["default_mode", final_override.get("profile", {}).get("default_mode", "")],
+                ["digest_top_n", final_override.get("profile", {}).get("digest_top_n", "")],
+                ["include_replies", bool_text(bool(final_override.get("x", {}).get("include_replies", True)))],
+                ["reply_like_threshold", final_override.get("x", {}).get("reply_like_threshold", "")],
                 ["feishu.enabled", bool_text(bool(final_override.get("outputs", {}).get("feishu", {}).get("enabled", False)))],
                 ["feishu_bitable.enabled", bool_text(bool(final_override.get("outputs", {}).get("feishu_bitable", {}).get("enabled", False)))],
             ],
@@ -330,3 +371,12 @@ def _ask_yes_no(prompt: str, default: bool) -> bool:
     if not value:
         return default
     return value in {"y", "yes"}
+
+
+def _ask_choice(prompt: str, options: list[str], default: str) -> str:
+    option_text = "/".join(options)
+    while True:
+        value = _ask(f"{prompt} ({option_text})", default).strip()
+        if value in options:
+            return value
+        print(f"请输入以下选项之一: {option_text}")

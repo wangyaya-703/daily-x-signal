@@ -4,12 +4,12 @@ import unittest
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from daily_x_signal.feishu_bitable import _build_fields
+from daily_x_signal.feishu_bitable import build_post_rows
 from daily_x_signal.models import Author, Post, Report
 
 
 class FeishuBitableTests(unittest.TestCase):
-    def test_build_fields_contains_expected_summary_values(self) -> None:
+    def test_build_post_rows_contains_expected_tracking_fields(self) -> None:
         now = datetime.now(ZoneInfo("Asia/Shanghai"))
         post = Post(
             id="1",
@@ -29,31 +29,35 @@ class FeishuBitableTests(unittest.TestCase):
             top_posts=[post],
             must_read=post,
             watchlist_authors=[],
-            overview_bullets=["今天主线是 AI 编程。"],
-            section_stats={"top_topics": ["AI 编程"], "high_fit_posts": 1},
-            metadata={
-                "candidate_count": 12,
-                "author_count": 5,
-                "following_status": {"reason": "following 已完整同步"},
-            },
+            overview_bullets=[],
+            section_stats={},
+            metadata={},
         )
 
-        fields = _build_fields(
+        rows = build_post_rows(
             report,
             {
                 "fields": {
+                    "post_id": "Post ID",
                     "digest_date": "Digest Date",
-                    "must_read": "Must Read",
-                    "overview": "Overview",
-                    "top_topics": "Top Topics",
+                    "priority": "Priority",
+                    "priority_score": "Priority Score",
+                    "original_url": "Original URL",
+                    "summary": "Summary",
+                    "published_at": "Published At",
+                    "topics": "Topics",
                 }
             },
         )
 
-        self.assertEqual(fields["Digest Date"], now.date().isoformat())
-        self.assertIn("@demo", fields["Must Read"])
-        self.assertIn("今天主线", fields["Overview"])
-        self.assertEqual(fields["Top Topics"], "AI 编程")
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["Post ID"], "1")
+        self.assertEqual(row["Digest Date"], now.date().isoformat())
+        self.assertEqual(row["Priority Score"], 0.0)
+        self.assertEqual(row["Original URL"]["link"], "https://x.com/demo/status/1")
+        self.assertIn("值得关注", row["Summary"])
+        self.assertEqual(row["Topics"], "")
 
 
 if __name__ == "__main__":

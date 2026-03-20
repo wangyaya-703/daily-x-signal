@@ -111,6 +111,7 @@ daily-x-signal setup
 - 飞书凭证是否齐全
 - following 是否读全
 - 推荐兴趣主题和关键词
+- 运行偏好（模式、展示条数、是否纳入回复）
 - 是否启用飞书卡片 / 多维表格
 
 最后会把结果写回 `config/local.yaml`。
@@ -211,7 +212,16 @@ daily-x-signal generate --window-mode rolling_24h --top-n 10 --override-config c
 
 - `output/feishu-bitable-preview/daily-brief-YYYY-MM-DD.json`
 
-同一天重复执行时会按 `Digest Date` 字段更新，不会重复追加多行。
+当前表格采用“1 个帖子 1 行”的追踪方式，核心字段包括：
+
+- `Priority`
+- `Priority Score`
+- `Original URL`
+- `Summary`
+- `Published At`
+- `Topics`
+
+系统会按 `Post ID` 做 upsert，同一条帖子重复进入日报时会更新原有记录，不会重复插入多行。
 
 ## 常用命令
 

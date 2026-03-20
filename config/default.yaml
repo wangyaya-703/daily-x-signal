@@ -165,15 +165,11 @@ outputs:
     table_id: null
     preview_directory: output/feishu-bitable-preview
     fields:
+      post_id: Post ID
       digest_date: Digest Date
-      generated_at: Generated At
-      window: Window
-      must_read: Must Read
-      must_read_url: Must Read URL
-      overview: Overview
-      top_posts: Top Posts
-      candidate_count: Candidate Count
-      author_count: Author Count
-      top_topics: Top Topics
-      high_fit_posts: High Fit Posts
-      following_status: Following Status
+      priority: Priority
+      priority_score: Priority Score
+      original_url: Original URL
+      summary: Summary
+      published_at: Published At
+      topics: Topics
