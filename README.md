@@ -76,6 +76,7 @@ git clone https://github.com/wangyaya-703/daily-x-signal.git
 cd daily-x-signal
 python3.11 -m pip install -e .
 
+daily-x-signal setup
 daily-x-signal generate
 daily-x-signal generate --window-mode rolling_24h
 daily-x-signal show-core-authors
@@ -96,6 +97,23 @@ cp config/local.example.yaml config/local.yaml
 ```
 
 `config/local.yaml` 已经加入 `.gitignore`，不会上传到 GitHub。真实密钥、个人账号信息、私有推送目标都应该只写在这个文件里。
+
+如果你不想手写 YAML，优先使用：
+
+```bash
+daily-x-signal setup
+```
+
+这个向导会按步骤检查：
+
+- `xreach` 是否安装
+- X 登录态是否有效
+- 飞书凭证是否齐全
+- following 是否读全
+- 推荐兴趣主题和关键词
+- 是否启用飞书卡片 / 多维表格
+
+最后会把结果写回 `config/local.yaml`。
 
 ### 你至少需要补的字段
 
@@ -233,6 +251,12 @@ daily-x-signal sync-authors --override-config config/local.yaml
 - `expected_following_count`
 - `completion_ratio`
 - `needs_confirmation`
+
+交互式引导配置：
+
+```bash
+daily-x-signal setup --override-config config/local.yaml
+```
 
 ## launchd 生产调度
 

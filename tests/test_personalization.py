@@ -72,6 +72,17 @@ class PersonalizationTests(unittest.TestCase):
         self.assertTrue(status["needs_confirmation"])
         self.assertIn("仍有下一页", status["reason"])
 
+    def test_snapshot_following_status_zero_authors_is_not_complete(self) -> None:
+        status = snapshot_following_status(
+            self.config,
+            [],
+            payload_meta={"has_more": False},
+            viewer_profile=None,
+        )
+
+        self.assertFalse(status["is_complete"])
+        self.assertIn("未同步到任何 following", status["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

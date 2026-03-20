@@ -42,3 +42,10 @@ class AppConfig:
             return self
         override = AppConfig.load(override_path)
         return AppConfig(raw=deep_merge(self.raw, override.raw), path=Path(override_path))
+
+
+def save_yaml(path: str | Path, payload: dict[str, Any]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(payload, fh, allow_unicode=True, sort_keys=False)

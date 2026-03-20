@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
+from .console import bool_text, print_section, render_table
 from .collector import (
     authors_from_cache,
     collect_home_candidates,
@@ -25,12 +26,14 @@ from .personalization import build_interest_profile
 from .report import build_report_overview, fallback_enrich, write_outputs
 from .scheduler import load_scheduler_state, record_scheduler_result, should_run_scheduler
 from .scoring import rank_posts, suggested_authors
+from .setup_wizard import run_setup
 from .store import load_json, save_json
 from .window import resolve_window
 from .x_client import XReachClient
 
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "config" / "default.yaml"
+LOCAL_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "local.yaml"
 STATE_PATH = Path(__file__).resolve().parents[1] / "state" / "history.json"
 FOLLOWING_CACHE_PATH = Path(__file__).resolve().parents[1] / "state" / "following_cache.json"
 CORE_POOL_PATH = Path(__file__).resolve().parents[1] / "state" / "core_authors.json"
@@ -39,7 +42,7 @@ SCHEDULER_STATE_PATH = Path(__file__).resolve().parents[1] / "state" / "schedule
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="daily-x-signal")
-    parser.add_argument("command", choices=["generate", "sync-authors", "show-core-authors", "schedule-tick"])
+    parser.add_argument("command", choices=["generate", "sync-authors", "show-core-authors", "schedule-tick", "setup"])
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--override-config")
     parser.add_argument("--window-mode", choices=["scheduled", "rolling_24h"], default="scheduled")
@@ -59,7 +62,29 @@ def cmd_sync_authors(config: dict, client: XReachClient) -> int:
         "authors": [author.raw for author in authors],
     }
     save_json(FOLLOWING_CACHE_PATH, payload)
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print_section("following 同步结果")
+    print(
+        render_table(
+            ["Field", "Value"],
+            [
+                ["refreshed_at", payload["refreshed_at"]],
+                ["synced_count", sync_result["status"].get("synced_count", 0)],
+                ["expected_following_count", sync_result["status"].get("expected_following_count", "")],
+                ["completion_ratio", sync_result["status"].get("completion_ratio", "")],
+                ["is_complete", bool_text(bool(sync_result["status"].get("is_complete", False)))],
+                ["needs_confirmation", bool_text(bool(sync_result["status"].get("needs_confirmation", False)))],
+                ["reason", sync_result["status"].get("reason", "")],
+            ],
+        )
+    )
+    if authors:
+        print_section("作者样本")
+        print(
+            render_table(
+                ["Handle", "Name", "Followers"],
+                [[author.handle, author.name, author.followers_count] for author in authors[:10]],
+            )
+        )
     return 0
 
 
@@ -287,6 +312,15 @@ def cmd_schedule_tick(args: argparse.Namespace, config: dict, client: XReachClie
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    if args.command == "setup":
+        target_config = Path(args.override_config) if args.override_config else LOCAL_CONFIG_PATH
+        return run_setup(
+            base_config_path=Path(args.config),
+            target_config_path=target_config,
+            client=XReachClient(workdir=Path.cwd()),
+            history_path=STATE_PATH,
+            following_cache_path=FOLLOWING_CACHE_PATH,
+        )
     base_config = AppConfig.load(args.config)
     config = base_config.merged_with(args.override_config).raw
     client = XReachClient(workdir=Path.cwd())

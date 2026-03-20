@@ -230,6 +230,9 @@ def snapshot_following_status(
     is_complete = not has_more and (expected == 0 or synced_count >= max(int(expected * warn_ratio), 1))
     needs_confirmation = bool(x_cfg.get("require_following_confirmation", True)) and not confirmed
     reasons: list[str] = []
+    if synced_count == 0:
+        is_complete = False
+        reasons.append("当前未同步到任何 following，建议检查 viewer 配置或 X 登录态。")
     if has_more:
         reasons.append(f"当前 following 同步在 max_pages={max_pages} 截断，仍有下一页。")
     if expected > 0 and synced_count < expected:
