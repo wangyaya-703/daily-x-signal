@@ -54,7 +54,9 @@ def _build_fields(report: Report, table_cfg: dict[str, Any]) -> dict[str, Any]:
         fields_map.get("generated_at", "Generated At"): report.generated_at.isoformat(),
         fields_map.get("window", "Window"): f"{report.window_start.isoformat()} -> {report.window_end.isoformat()}",
         fields_map.get("must_read", "Must Read"): f"@{must_read.author.handle} {must_read.why_it_matters}" if must_read else "",
-        fields_map.get("must_read_url", "Must Read URL"): must_read.url if must_read else "",
+        fields_map.get("must_read_url", "Must Read URL"): (
+            {"text": "查看原帖", "link": must_read.url} if must_read and must_read.url else None
+        ),
         fields_map.get("overview", "Overview"): overview,
         fields_map.get("top_posts", "Top Posts"): top_posts,
         fields_map.get("candidate_count", "Candidate Count"): report.metadata.get("candidate_count", 0),
