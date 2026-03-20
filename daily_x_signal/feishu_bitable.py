@@ -43,6 +43,13 @@ def upsert_feishu_bitable(
     return preview_path, f"{upserted} rows upserted"
 
 
+def bitable_app_url(config: dict[str, Any]) -> str | None:
+    app_token = str(config.get("outputs", {}).get("feishu_bitable", {}).get("app_token", "")).strip()
+    if not app_token:
+        return None
+    return f"https://bytedance.larkoffice.com/base/{app_token}"
+
+
 def build_post_rows(report: Report, table_cfg: dict[str, Any]) -> list[dict[str, Any]]:
     return [_build_post_row(report, post, table_cfg) for post in report.top_posts]
 

@@ -11,6 +11,7 @@ from .collector import sync_following
 from .config import AppConfig, deep_merge, save_yaml
 from .console import bool_text, print_section, render_table, status_text
 from .core_authors import load_history
+from .feishu_bitable import bitable_app_url
 from .personalization import build_interest_profile, topic_labels
 from .x_client import XReachClient
 
@@ -138,11 +139,24 @@ def run_setup(
             ["Output", "Current", "Ready", "Detail"],
             [
                 ["Feishu Card", bool_text(feishu_default), bool_text(_check_ok(checks, "feishu_app")), "飞书卡片推送"],
-                ["Feishu Bitable", bool_text(bool(bitable_cfg.get("enabled", False))), bool_text(bitable_ready), "日报追踪表"],
+                ["Feishu Bitable", bool_text(bool(bitable_cfg.get("enabled", False))), bool_text(bitable_ready), "帖子追踪表（1 帖 1 行）"],
                 ["Local Files", "Yes", "Yes", "Markdown + JSON"],
             ],
         )
     )
+    if bitable_ready:
+        print(
+            render_table(
+                ["Bitable", "Value"],
+                [
+                    ["App Token", bitable_cfg.get("app_token", "")],
+                    ["Table ID", bitable_cfg.get("table_id", "")],
+                    ["Open URL", bitable_app_url(config) or ""],
+                    ["Write Model", "按 Post ID upsert，1 个帖子 1 行"],
+                    ["Tracked Fields", "Priority / Priority Score / Original URL / Summary / Published At / Topics"],
+                ],
+            )
+        )
     enable_feishu = _ask_yes_no("启用飞书卡片推送", feishu_default)
     enable_bitable = _ask_yes_no("启用飞书多维表格追踪", bool(bitable_cfg.get("enabled", False)) if bitable_ready else False)
 
@@ -201,16 +215,14 @@ def run_setup(
 
     save_yaml(target_config_path, final_override)
     print_section("完成")
-    print(
-        render_table(
-            ["Next Step", "Command"],
-            [
-                ["验证 following", f"daily-x-signal sync-authors --override-config {target_config_path}"],
-                ["生成样例日报", f"daily-x-signal generate --window-mode rolling_24h --override-config {target_config_path}"],
-                ["调度检查", f"daily-x-signal schedule-tick --override-config {target_config_path}"],
-            ],
-        )
-    )
+    next_rows = [
+        ["验证 following", f"daily-x-signal sync-authors --override-config {target_config_path}"],
+        ["生成样例日报", f"daily-x-signal generate --window-mode rolling_24h --override-config {target_config_path}"],
+        ["调度检查", f"daily-x-signal schedule-tick --override-config {target_config_path}"],
+    ]
+    if final_override.get("outputs", {}).get("feishu_bitable", {}).get("enabled", False):
+        next_rows.append(["查看帖子追踪表", bitable_app_url({"outputs": {"feishu_bitable": final_override.get("outputs", {}).get("feishu_bitable", {})}}) or ""])
+    print(render_table(["Next Step", "Command"], next_rows))
     return 0
 
 

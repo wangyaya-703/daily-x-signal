@@ -4,11 +4,15 @@ import unittest
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from daily_x_signal.feishu_bitable import build_post_rows
+from daily_x_signal.feishu_bitable import bitable_app_url, build_post_rows
 from daily_x_signal.models import Author, Post, Report
 
 
 class FeishuBitableTests(unittest.TestCase):
+    def test_bitable_app_url_uses_app_token(self) -> None:
+        url = bitable_app_url({"outputs": {"feishu_bitable": {"app_token": "app123"}}})
+        self.assertEqual(url, "https://bytedance.larkoffice.com/base/app123")
+
     def test_build_post_rows_contains_expected_tracking_fields(self) -> None:
         now = datetime.now(ZoneInfo("Asia/Shanghai"))
         post = Post(

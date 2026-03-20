@@ -19,6 +19,7 @@ from .collector import (
 )
 from .core_authors import author_stats_from_history, build_core_pool, load_history, save_history, update_history
 from .feishu import deliver_feishu, deliver_feishu_bitable
+from .feishu_bitable import bitable_app_url
 from .github_fallback import sync_success_marker
 from .llm import LLMClient, apply_llm_summary, extract_llm_overview, extract_llm_watchlist
 from .models import Report
@@ -234,17 +235,49 @@ def cmd_generate(args: argparse.Namespace, config: dict, client: XReachClient) -
     feishu_status = result.get("feishu_status")
     bitable_preview_path = result.get("bitable_preview_path")
     bitable_record_id = result.get("bitable_record_id")
-    print(f"Markdown: {md_path}")
-    print(f"JSON: {json_path}")
-    if feishu_preview_path:
-        print(f"Feishu preview: {feishu_preview_path}")
-    if feishu_status:
-        print(f"Feishu status: {feishu_status}")
-    if bitable_preview_path:
-        print(f"Feishu bitable preview: {bitable_preview_path}")
-    if bitable_record_id:
-        print(f"Feishu bitable record: {bitable_record_id}")
-    print(f"Core author pool size: {result.get('core_pool_size', 0)}")
+    print_section("生成结果")
+    print(
+        render_table(
+            ["Item", "Value"],
+            [
+                ["Markdown", str(md_path or "")],
+                ["JSON", str(json_path or "")],
+                ["Core author pool size", result.get("core_pool_size", 0)],
+            ],
+        )
+    )
+    print_section("投递状态")
+    print(
+        render_table(
+            ["Channel", "Enabled", "Result", "Detail"],
+            [
+                [
+                    "Feishu Card",
+                    bool_text(bool(config.get("outputs", {}).get("feishu", {}).get("enabled", False))),
+                    "OK" if feishu_status == 200 else ("SKIP" if feishu_preview_path and not feishu_status else "WARN"),
+                    str(feishu_preview_path or feishu_status or "未启用"),
+                ],
+                [
+                    "Feishu Bitable",
+                    bool_text(bool(config.get("outputs", {}).get("feishu_bitable", {}).get("enabled", False))),
+                    "OK" if bitable_record_id else ("SKIP" if bitable_preview_path else "WARN"),
+                    str(bitable_record_id or bitable_preview_path or "未启用"),
+                ],
+            ],
+        )
+    )
+    if config.get("outputs", {}).get("feishu_bitable", {}).get("enabled", False):
+        print_section("帖子追踪表")
+        print(
+            render_table(
+                ["Field", "Value"],
+                [
+                    ["Open URL", bitable_app_url(config) or ""],
+                    ["Write Model", "按 Post ID upsert，1 个帖子 1 行"],
+                    ["Tracked Fields", "Priority / Priority Score / Original URL / Summary / Published At / Topics"],
+                ],
+            )
+        )
     return 0
 
 

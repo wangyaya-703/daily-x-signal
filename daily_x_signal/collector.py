@@ -111,7 +111,7 @@ def sync_following(client: XReachClient, config: dict[str, Any]) -> dict[str, An
     except XReachError as exc:
         status = snapshot_following_status(config, [], payload_meta={"has_more": False}, viewer_profile=None)
         status["is_complete"] = False
-        status["reason"] = f"following 同步失败，已回退本地缓存：{exc}"
+        status["reason"] = f"following 同步失败，已回退本地缓存：{_summarize_xreach_error(exc)}"
         return {
             "authors": [],
             "status": status,
@@ -259,3 +259,20 @@ def build_signal_snapshot(post: Post) -> dict[str, float]:
             + 0.5 * post.reply_count
         ),
     }
+
+
+def _summarize_xreach_error(error: Exception) -> str:
+    lines = [line.strip() for line in str(error).splitlines() if line.strip()]
+    for line in lines:
+        if line.startswith("Error: GraphQL Error:"):
+            return line.split("GraphQL Error:", 1)[1].strip()
+    for line in lines:
+        if "GraphQL Error:" in line and "throw new Error" not in line:
+            return line.split("GraphQL Error:", 1)[1].strip()
+        if line.startswith("Error:"):
+            return line[len("Error:") :].strip()
+    for line in lines:
+        if line.startswith(("file://", "at ", "throw new Error", "^", "Node.js ")):
+            continue
+        return line
+    return str(error).strip() or "未知错误"
