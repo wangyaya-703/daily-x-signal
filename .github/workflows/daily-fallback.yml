@@ -2,12 +2,16 @@ name: Daily X Signal Fallback
 
 on:
   schedule:
-    - cron: "35 3 * * *"
+    - cron: "35 0,1,2,3 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
   actions: write
+
+concurrency:
+  group: daily-x-signal-fallback
+  cancel-in-progress: false
 
 jobs:
   fallback-send:
@@ -106,6 +110,8 @@ jobs:
               app_secret_env: FEISHU_APP_SECRET
               receive_id_env: DAILY_X_SIGNAL_FEISHU_RECEIVE_ID
               receive_id_type: email
+            feishu_bitable:
+              enabled: false
           EOF
 
       - name: 生成并补发日报
@@ -116,20 +122,7 @@ jobs:
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           DAILY_X_SIGNAL_FEISHU_RECEIVE_ID: ${{ secrets.DAILY_X_SIGNAL_FEISHU_RECEIVE_ID }}
         run: |
-          daily-x-signal generate --window-mode scheduled --override-config config/github-actions.local.yaml
-
-      - name: 回写 GitHub 成功标记
-        if: steps.marker.outputs.should_run == 'true' && steps.ready.outputs.ready == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TZ: Asia/Shanghai
-        run: |
-          TODAY="$(TZ=Asia/Shanghai date +%F)"
-          NOW="$(TZ=Asia/Shanghai date --iso-8601=seconds)"
-          gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LAST_DAILY_X_SIGNAL_SUCCESS_DATE" --method PATCH -f name=LAST_DAILY_X_SIGNAL_SUCCESS_DATE -f value="$TODAY" >/dev/null 2>&1 || \
-          gh api "repos/${GITHUB_REPOSITORY}/actions/variables" --method POST -f name=LAST_DAILY_X_SIGNAL_SUCCESS_DATE -f value="$TODAY"
-          gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LAST_DAILY_X_SIGNAL_SUCCESS_AT" --method PATCH -f name=LAST_DAILY_X_SIGNAL_SUCCESS_AT -f value="$NOW" >/dev/null 2>&1 || \
-          gh api "repos/${GITHUB_REPOSITORY}/actions/variables" --method POST -f name=LAST_DAILY_X_SIGNAL_SUCCESS_AT -f value="$NOW"
+          daily-x-signal schedule-tick --force --override-config config/github-actions.local.yaml
 
       - name: 输出跳过原因
         if: steps.marker.outputs.should_run == 'true' && steps.ready.outputs.ready != 'true'

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .models import Post, Report
+from .personalization import topic_labels
 
 
 def fallback_enrich(posts: list[Post]) -> None:
@@ -28,6 +30,8 @@ def fallback_enrich(posts: list[Post]) -> None:
 
 
 def to_markdown(report: Report) -> str:
+    stats = report.section_stats or {}
+    following_status = report.metadata.get("following_status", {})
     lines = [
         f"# X 晨报 {report.generated_at.strftime('%Y-%m-%d')}",
         "",
@@ -35,10 +39,35 @@ def to_markdown(report: Report) -> str:
         f"- 模式：`{report.mode}`",
         f"- 候选帖子数：{report.metadata.get('candidate_count', 0)}",
         f"- 扫描作者数：{report.metadata.get('author_count', 0)}",
+        f"- following 同步：`{following_status.get('synced_count', 0)}`"
+        + (
+            f" / `{following_status.get('expected_following_count')}`"
+            if following_status.get("expected_following_count")
+            else ""
+        ),
         "",
-        "## 今日必读",
+        "## 今日概览",
         "",
     ]
+    if report.overview_bullets:
+        for bullet in report.overview_bullets:
+            lines.append(f"- {bullet}")
+    else:
+        lines.append("- 暂无概览。")
+    lines.extend(
+        [
+            "",
+            "## 统计摘要",
+            "",
+            f"- 高匹配帖子：{stats.get('high_fit_posts', 0)} 条",
+            f"- 强信号帖子：{stats.get('high_signal_posts', 0)} 条",
+            f"- 高价值作者：{', '.join(f'@{handle}' for handle in stats.get('top_authors', [])[:4]) or '暂无'}",
+            f"- 高频主题：{'、'.join(stats.get('top_topics', [])) or '暂无'}",
+            "",
+            "## 今日必读",
+            "",
+        ]
+    )
     must_read = report.must_read
     if must_read:
         lines.extend(render_post_block(must_read))
@@ -84,6 +113,8 @@ def to_json_payload(report: Report) -> dict[str, Any]:
             "end": report.window_end.isoformat(),
         },
         "mode": report.mode,
+        "overview_bullets": report.overview_bullets,
+        "section_stats": report.section_stats,
         "metadata": report.metadata,
         "must_read": post_to_dict(report.must_read) if report.must_read else None,
         "top_posts": [post_to_dict(post) for post in report.top_posts],
@@ -207,8 +238,61 @@ def _localize_tags(tags: list[str]) -> list[str]:
         "freshness:high": "新鲜度高",
         "freshness:medium": "新鲜度中",
         "freshness:low": "新鲜度低",
+        "fit:high": "高度匹配",
+        "fit:medium": "中度匹配",
+        "fit:low": "低匹配",
+        "author:trusted": "高价值作者",
+        "format:thread": "线程/长帖",
+        "format:reply": "高质量回复",
+        "format:quote": "评论转发",
+        "format:link": "带外链",
         "signal:high": "信号强",
         "signal:medium": "信号中",
         "signal:low": "信号弱",
     }
     return [mapping.get(tag, tag) for tag in tags]
+
+
+def build_report_overview(
+    top_posts: list[Post],
+    interest_profile: dict[str, Any],
+    llm_overview: list[str],
+    following_status: dict[str, Any],
+) -> tuple[list[str], dict[str, Any]]:
+    if llm_overview:
+        overview = llm_overview[:4]
+    else:
+        overview = _fallback_overview(top_posts, interest_profile, following_status)
+
+    tag_counter: Counter[str] = Counter()
+    author_counter: Counter[str] = Counter()
+    for post in top_posts:
+        tag_counter.update(tag for tag in post.tags if not tag.startswith(("freshness:", "signal:", "fit:", "format:")))
+        author_counter[post.author.handle] += 1
+    stats = {
+        "high_fit_posts": sum(1 for post in top_posts if float(post.scores.get("personal_fit", 0.0)) >= 3.0),
+        "high_signal_posts": sum(1 for post in top_posts if "signal:high" in post.tags),
+        "top_authors": [handle for handle, _ in author_counter.most_common(5)],
+        "top_topics": topic_labels([tag for tag, _ in tag_counter.most_common(4)]),
+    }
+    return overview, stats
+
+
+def _fallback_overview(top_posts: list[Post], interest_profile: dict[str, Any], following_status: dict[str, Any]) -> list[str]:
+    bullets: list[str] = []
+    topic_counter: Counter[str] = Counter()
+    fit_count = 0
+    for post in top_posts:
+        topic_counter.update(tag for tag in post.tags if tag in {"ai_coding", "agent_frameworks", "model_releases", "papers_algorithms"})
+        if float(post.scores.get("personal_fit", 0.0)) >= 3.0:
+            fit_count += 1
+
+    if topic_counter:
+        bullets.append(f"今天最值得看的主线集中在：{'、'.join(topic_labels([tag for tag, _ in topic_counter.most_common(3)]))}。")
+    if interest_profile.get("summary_bullets"):
+        bullets.append(interest_profile["summary_bullets"][0])
+    if fit_count:
+        bullets.append(f"Top 帖子里有 {fit_count} 条与当前兴趣画像高度匹配，推荐优先看完。")
+    if following_status.get("reason"):
+        bullets.append(f"following 同步状态：{following_status['reason']}")
+    return bullets[:4]

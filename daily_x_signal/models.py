@@ -61,4 +61,6 @@ class Report:
     top_posts: list[Post]
     must_read: Post | None
     watchlist_authors: list[dict[str, Any]]
+    overview_bullets: list[str] = field(default_factory=list)
+    section_stats: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)

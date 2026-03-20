@@ -1,6 +1,17 @@
 x:
   viewer_handle: your_x_handle
   viewer_user_id: "your_x_user_id"
+  expected_following_count: 800
+  following_count_confirmed: true
+
+profile:
+  preferred_topics:
+    - ai_coding
+    - agent_frameworks
+  interest_keywords:
+    - codex
+    - tool calling
+    - benchmark
 
 llm:
   enabled: true
@@ -20,3 +31,7 @@ outputs:
     app_secret_env: FEISHU_APP_SECRET
     receive_id_env: DAILY_X_SIGNAL_FEISHU_RECEIVE_ID
     receive_id_type: email
+  feishu_bitable:
+    enabled: false
+    app_token: your_bitable_app_token
+    table_id: your_bitable_table_id

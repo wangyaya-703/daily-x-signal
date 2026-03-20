@@ -7,6 +7,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 from .models import Author, Post
+from .personalization import snapshot_following_status
 from .window import TimeWindow
 from .x_client import XReachClient, XReachError
 
@@ -72,27 +73,74 @@ def extract_referenced_handles(text: str) -> list[str]:
 
 
 def collect_authors(client: XReachClient, config: dict[str, Any]) -> list[Author]:
+    return sync_following(client, config)["authors"]
+
+
+def collect_viewer_profile(client: XReachClient, config: dict[str, Any]) -> dict[str, Any] | None:
+    handle = str(config["x"].get("viewer_handle", "") or "").strip()
+    if not handle:
+        return None
+    try:
+        return client.user(handle)
+    except XReachError:
+        return None
+
+
+def sync_following(client: XReachClient, config: dict[str, Any]) -> dict[str, Any]:
     handle = str(config["x"].get("viewer_handle", "") or "").strip()
     user_id = str(config["x"].get("viewer_user_id", "") or "").strip()
     max_pages = int(config["x"].get("following_sync_max_pages", 1))
-    max_authors = int(config["x"].get("max_authors_per_run", 40))
+    max_authors = int(config["x"].get("max_authors_per_run", 0) or 0)
     if not user_id and not handle:
-        return []
+        status = snapshot_following_status(config, [], payload_meta={"has_more": False}, viewer_profile=None)
+        status["is_complete"] = False
+        status["reason"] = "缺少 x.viewer_handle / x.viewer_user_id，无法同步 following。"
+        return {
+            "authors": [],
+            "status": status,
+            "payload": {"items": [], "hasMore": False},
+            "viewer_profile": None,
+        }
     try:
         if user_id:
             payload = client.following_by_user_id(user_id, max_pages=max_pages, count=50)
         else:
             payload = client.following(handle, max_pages=max_pages, count=50)
         items = payload.get("items", [])
-    except XReachError:
-        return []
-    authors = [author_from_item(item) for item in items[:max_authors]]
-    return authors
+        viewer_profile = collect_viewer_profile(client, config)
+    except XReachError as exc:
+        status = snapshot_following_status(config, [], payload_meta={"has_more": False}, viewer_profile=None)
+        status["is_complete"] = False
+        status["reason"] = f"following 同步失败，已回退本地缓存：{exc}"
+        return {
+            "authors": [],
+            "status": status,
+            "payload": {"items": [], "hasMore": False},
+            "viewer_profile": None,
+        }
+
+    if max_authors > 0:
+        items = items[:max_authors]
+    authors = [author_from_item(item) for item in items]
+    status = snapshot_following_status(
+        config,
+        authors,
+        payload_meta={"has_more": bool(payload.get("hasMore")), "cursor": payload.get("cursor")},
+        viewer_profile=viewer_profile,
+    )
+    return {
+        "authors": authors,
+        "status": status,
+        "payload": payload,
+        "viewer_profile": viewer_profile,
+    }
 
 
 def authors_from_cache(payload: dict[str, Any], limit: int) -> list[Author]:
     items = payload.get("authors", [])
-    return [author_from_item(item) for item in items[:limit]]
+    if limit and limit > 0:
+        items = items[:limit]
+    return [author_from_item(item) for item in items]
 
 
 def collect_home_candidates(client: XReachClient, window: TimeWindow) -> list[Post]:

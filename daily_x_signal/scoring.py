@@ -7,6 +7,7 @@ from typing import Any
 
 from .collector import build_signal_snapshot, extract_referenced_handles
 from .models import Post
+from .personalization import derive_personalized_tags, score_personal_fit
 
 
 NOISE_PATTERNS = (
@@ -113,19 +114,28 @@ def penalty(post: Post, config: dict[str, Any], topic_relevance: float, substanc
     return score
 
 
-def rank_posts(posts: list[Post], config: dict[str, Any], author_stats: dict[str, Any]) -> list[Post]:
+def rank_posts(
+    posts: list[Post],
+    config: dict[str, Any],
+    author_stats: dict[str, Any],
+    interest_profile: dict[str, Any] | None = None,
+) -> list[Post]:
     weights = config["ranking"]["weights"]
+    interest_profile = interest_profile or {}
+    personalization_weight = float(config.get("personalization", {}).get("ranking_weight", 0.15))
     for post in posts:
         topic_scores = score_topics(post, config)
         topic_relevance = sum(topic_scores.values())
         substance = score_substance(post)
         social_signal = score_social_signal(post)
         author_signal = score_author_signal(post, author_stats)
+        personal_fit = score_personal_fit(post, interest_profile)
         total = (
             float(weights["topic_relevance"]) * topic_relevance
             + float(weights["substance"]) * substance
             + float(weights["social_signal"]) * social_signal
             + float(weights["author_signal"]) * author_signal
+            + personalization_weight * personal_fit
             - penalty(post, config, topic_relevance, substance)
         )
         post.scores = {
@@ -133,9 +143,10 @@ def rank_posts(posts: list[Post], config: dict[str, Any], author_stats: dict[str
             "substance": substance,
             "social_signal": social_signal,
             "author_signal": author_signal,
+            "personal_fit": personal_fit,
             "priority": total,
         }
-        post.tags = [tag for tag, value in sorted(topic_scores.items(), key=lambda item: item[1], reverse=True) if value > 0][:3]
+        post.tags = derive_personalized_tags(post, interest_profile, author_stats)
     ranked = sorted(posts, key=lambda p: p.scores["priority"], reverse=True)
     for idx, post in enumerate(ranked):
         post.priority_label = priority_label_for_rank(idx)

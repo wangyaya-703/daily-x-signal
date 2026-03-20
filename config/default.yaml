@@ -3,6 +3,9 @@ profile:
   default_mode: all_following
   digest_top_n: 10
   review_pick_count: 1
+  preferred_topics: []
+  interest_keywords: []
+  disliked_keywords: []
 
 scheduler:
   enabled: true
@@ -23,8 +26,8 @@ x:
   viewer_handle: null
   viewer_user_id: null
   fallback_to_home_timeline: true
-  following_sync_max_pages: 2
-  max_authors_per_run: 40
+  following_sync_max_pages: 20
+  max_authors_per_run: 0
   max_active_authors_per_run: 12
   tweets_pages_per_author: 1
   include_replies: true
@@ -32,6 +35,10 @@ x:
   thread_fetch_top_n: 12
   min_post_length: 20
   dedupe_by_conversation: true
+  expected_following_count: null
+  following_count_confirmed: false
+  require_following_confirmation: true
+  following_completion_ratio_warn_threshold: 0.85
 
 topics:
   ai_coding:
@@ -104,6 +111,12 @@ ranking:
     pure_link: 0.10
     obvious_noise: 0.40
 
+personalization:
+  enabled: true
+  ranking_weight: 0.15
+  author_profile_sample_limit: 200
+  interest_keyword_limit: 12
+
 core_authors:
   enabled: true
   mode_default_limit: 30
@@ -146,3 +159,21 @@ outputs:
     preview_directory: output/feishu-preview
     card_theme: blue
     mention_all: false
+  feishu_bitable:
+    enabled: false
+    app_token: null
+    table_id: null
+    preview_directory: output/feishu-bitable-preview
+    fields:
+      digest_date: Digest Date
+      generated_at: Generated At
+      window: Window
+      must_read: Must Read
+      must_read_url: Must Read URL
+      overview: Overview
+      top_posts: Top Posts
+      candidate_count: Candidate Count
+      author_count: Author Count
+      top_topics: Top Topics
+      high_fit_posts: High Fit Posts
+      following_status: Following Status

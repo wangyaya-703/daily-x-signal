@@ -19,7 +19,7 @@ class LLMClient:
             return False
         return bool(self._api_key())
 
-    def summarize_posts(self, posts: list[Post]) -> dict[str, Any] | None:
+    def summarize_posts(self, posts: list[Post], interest_profile: dict[str, Any] | None = None) -> dict[str, Any] | None:
         if not posts or not self.is_enabled():
             return None
         api_key = self._api_key()
@@ -31,7 +31,7 @@ class LLMClient:
         timeout = int(self.config["llm"].get("request_timeout_sec", 120))
         model = self.config["llm"]["model"]
         temperature = float(self.config["llm"].get("temperature", 0.2))
-        prompt = build_prompt(posts)
+        prompt = build_prompt(posts, interest_profile or {})
 
         for api_style in _style_order(self.config["llm"].get("api_style", "responses")):
             try:
@@ -100,17 +100,22 @@ def _extract_responses_text(payload: dict[str, Any]) -> str:
     raise ValueError("No text content in responses payload")
 
 
-def build_prompt(posts: list[Post]) -> str:
+def build_prompt(posts: list[Post], interest_profile: dict[str, Any]) -> str:
+    interest_topics = "、".join(interest_profile.get("top_topics", [])[:4]) or "未显式配置"
+    interest_keywords = "、".join(interest_profile.get("keywords", [])[:8]) or "未提取到明显关键词"
     lines = [
-        "你在给一位关注 AI coding、Agent 框架、模型发布、重要论文 的用户生成中文 X 日报。",
+        "你在给一位高度个性化的 X 用户生成中文日报。",
         "只返回 JSON，不要 markdown，不要代码块。",
         "输出必须是中文，风格精炼，像真正的投研/情报摘要，不要复述原文。",
         "Schema:",
-        '{"posts":[{"id":"tweet id","why_it_matters":"一句中文判断","bullets":["2到4条中文要点"],"tags":["不超过3个中文标签"],"freshness":"high|medium|low","signal":"high|medium|low"}],"must_read_id":"tweet id","watchlist":[{"handle":"不带@","reason":"一句中文说明为什么值得关注"}]}',
+        '{"overview":["2到4条中文总览"],"posts":[{"id":"tweet id","why_it_matters":"一句中文判断","bullets":["2到4条中文要点"],"tags":["不超过3个中文标签"],"freshness":"high|medium|low","signal":"high|medium|low"}],"must_read_id":"tweet id","watchlist":[{"handle":"不带@","reason":"一句中文说明为什么值得关注"}]}',
         "筛选与摘要规则：",
+        f"- 用户当前兴趣主题：{interest_topics}",
+        f"- 用户当前兴趣关键词：{interest_keywords}",
         "- 优先选择有方法论、架构设计、代码、repo、benchmark、工作流、真实经验、论文洞察的帖子。",
         "- 降权纯情绪、纯站队、纯转述、纯营销、没有新增信息的帖子。",
         "- 必须从给定帖子里选 exactly one must_read_id。",
+        "- overview 要先归纳今天真正值得看的总趋势，不要只列帖子标题。",
         "- why_it_matters 要回答“为什么这条值得你看”，不能空泛。",
         "- bullets 要提炼真正的信息增量，不要照抄互动数据，不要堆原句。",
         "- 如果是合集帖，要指出它的价值在于“索引/生态扫描”，而不是假装它是原始研究。",
@@ -125,7 +130,7 @@ def build_prompt(posts: list[Post]) -> str:
                 f"作者: @{post.author.handle}",
                 f"链接: {post.url}",
                 f"优先级分: {post.scores.get('priority', 0):.2f}",
-                f"主题分: {post.scores.get('topic_relevance', 0):.2f} | 干货分: {post.scores.get('substance', 0):.2f} | 社交分: {post.scores.get('social_signal', 0):.2f}",
+                f"主题分: {post.scores.get('topic_relevance', 0):.2f} | 干货分: {post.scores.get('substance', 0):.2f} | 社交分: {post.scores.get('social_signal', 0):.2f} | 偏好匹配分: {post.scores.get('personal_fit', 0):.2f}",
                 f"当前标签: {', '.join(post.tags)}",
                 f"互动: likes={post.like_count}, reposts={post.retweet_count}, quotes={post.quote_count}, replies={post.reply_count}, bookmarks={post.bookmark_count}",
                 f"正文:\n{post.primary_text}",
@@ -176,3 +181,14 @@ def extract_llm_watchlist(llm_payload: dict[str, Any] | None) -> list[dict[str, 
             continue
         results.append({"handle": handle, "reason": reason, "source_posts": []})
     return results
+
+
+def extract_llm_overview(llm_payload: dict[str, Any] | None) -> list[str]:
+    if not llm_payload:
+        return []
+    overview = []
+    for item in llm_payload.get("overview", []):
+        text = str(item).strip()
+        if text:
+            overview.append(text[:120])
+    return overview[:4]

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Post
+from .personalization import extract_keywords_for_history
 
 
 def load_history(path: str | Path) -> dict[str, Any]:
@@ -34,6 +35,7 @@ def update_history(
     generated_at: datetime,
 ) -> dict[str, Any]:
     authors = defaultdict(lambda: {"selected_runs": 0, "priority_sum": 0.0, "topic_sum": 0.0, "signal_sum": 0.0})
+    interest_profile = history.setdefault("interest_profile", {"topic_hits": {}, "tag_hits": {}, "keyword_hits": {}, "author_hits": {}})
     for handle, stats in history.get("authors", {}).items():
         authors[handle].update(stats)
     for post in selected_posts:
@@ -45,6 +47,22 @@ def update_history(
         stats["avg_priority"] = stats["priority_sum"] / stats["selected_runs"]
         stats["avg_topic_relevance"] = stats["topic_sum"] / stats["selected_runs"]
         stats["avg_signal"] = stats["signal_sum"] / stats["selected_runs"]
+
+        author_hits = interest_profile.setdefault("author_hits", {})
+        author_hits[post.author.handle] = int(author_hits.get(post.author.handle, 0)) + 1
+        topic_hits = interest_profile.setdefault("topic_hits", {})
+        for topic, value in post.topic_scores.items():
+            if value <= 0:
+                continue
+            topic_hits[topic] = round(float(topic_hits.get(topic, 0.0)) + float(value), 4)
+        tag_hits = interest_profile.setdefault("tag_hits", {})
+        for tag in post.tags:
+            tag_hits[tag] = int(tag_hits.get(tag, 0)) + 1
+        keyword_hits = interest_profile.setdefault("keyword_hits", {})
+        for keyword, value in extract_keywords_for_history(post.primary_text).items():
+            if value <= 0:
+                continue
+            keyword_hits[keyword] = int(keyword_hits.get(keyword, 0)) + int(value)
     history.setdefault("runs", []).append(
         {
             "generated_at": generated_at.isoformat(),
@@ -54,6 +72,12 @@ def update_history(
     )
     history["runs"] = history["runs"][-30:]
     history["authors"] = dict(sorted(authors.items()))
+    history["interest_profile"] = {
+        "topic_hits": dict(sorted(interest_profile.get("topic_hits", {}).items(), key=lambda item: item[1], reverse=True)[:30]),
+        "tag_hits": dict(sorted(interest_profile.get("tag_hits", {}).items(), key=lambda item: item[1], reverse=True)[:30]),
+        "keyword_hits": dict(sorted(interest_profile.get("keyword_hits", {}).items(), key=lambda item: item[1], reverse=True)[:80]),
+        "author_hits": dict(sorted(interest_profile.get("author_hits", {}).items(), key=lambda item: item[1], reverse=True)[:40]),
+    }
     return history
 
 

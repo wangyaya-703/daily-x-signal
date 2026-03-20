@@ -5,22 +5,26 @@
 ## 能做什么
 
 - 扫描关注账号在固定时间窗口或过去 24 小时内的帖子
-- 按主题相关性、干货程度、社交信号排序
+- 按主题相关性、干货程度、社交信号和个人兴趣偏好排序
 - 输出 Top 10、今日必读、建议额外关注
 - 自动维护重点作者池
+- 自动检查 following 是否读全，并在配置时要求确认关注总量
+- 基于 following 简介、历史命中结果和手动偏好生成兴趣画像
 - 支持使用 OpenAI 兼容接口做更高质量的中文摘要
-- 支持把结果输出到本地文件或飞书
+- 支持把结果输出到本地文件、飞书卡片和飞书多维表格
 
 ## 当前能力
 
 - 基于 `xreach` 抓取关注账号内容
 - following 同步失败时回退到本地缓存
+- following 同步时会输出完整性状态，支持 expected_following_count 确认
 - 支持 `reply_like_threshold` 过滤高质量回复
 - 默认调度窗口：昨天 `08:00` 到今天 `08:30`（`Asia/Shanghai`）
 - 支持手动按过去 `24h` 生成临时报
 - 输出 Markdown 和 JSON
 - 自动维护 core author 历史
-- 支持飞书 Webhook 或飞书 App 方式推送
+- 支持飞书 Webhook、飞书 App 推送和飞书多维表格 upsert
+- 支持 GitHub Actions 作为本地调度失败时的幂等兜底
 - 支持 GPT-5.4 或任意 OpenAI 兼容接口
 
 ## 依赖与认证
@@ -99,6 +103,16 @@ cp config/local.example.yaml config/local.yaml
 x:
   viewer_handle: your_x_handle
   viewer_user_id: "your_x_user_id"
+  expected_following_count: 800
+  following_count_confirmed: true
+
+profile:
+  preferred_topics:
+    - ai_coding
+    - agent_frameworks
+  interest_keywords:
+    - codex
+    - benchmark
 
 llm:
   enabled: true
@@ -163,6 +177,7 @@ daily-x-signal generate --window-mode rolling_24h --top-n 10 --override-config c
 - `output/daily-brief-YYYY-MM-DD.json`
 
 如果 JSON 里是 `llm_enabled: true`，说明模型摘要已生效。
+如果 `metadata.following_status.needs_confirmation=true`，说明你还没确认 following 是否读全。
 
 ### 3. 验证飞书
 
@@ -171,6 +186,14 @@ daily-x-signal generate --window-mode rolling_24h --top-n 10 --override-config c
 - `output/feishu-preview/daily-brief-YYYY-MM-DD.json`
 
 如果启用了真实推送，再确认飞书里是否收到卡片。
+
+### 4. 验证飞书多维表格
+
+启用 `outputs.feishu_bitable.enabled: true` 后，生成结果会额外输出：
+
+- `output/feishu-bitable-preview/daily-brief-YYYY-MM-DD.json`
+
+同一天重复执行时会按 `Digest Date` 字段更新，不会重复追加多行。
 
 ## 常用命令
 
@@ -204,6 +227,13 @@ daily-x-signal show-core-authors
 daily-x-signal sync-authors --override-config config/local.yaml
 ```
 
+这个命令会输出以下关键信息：
+
+- `synced_count`
+- `expected_following_count`
+- `completion_ratio`
+- `needs_confirmation`
+
 ## launchd 生产调度
 
 推荐使用 macOS 的 `launchd` 作为生产调度器，而不是手工挂一个终端窗口。当前项目采用的是“轮询补偿 + 防重复发送”的模式：
@@ -213,6 +243,12 @@ daily-x-signal sync-authors --override-config config/local.yaml
 - 每天 `08:30` 之后进入可发送窗口
 - 如果 `08:30` 因为睡眠、断网或临时错误错过，会在 `11:30` 前自动补发
 - 如果当天已经成功发送过，会自动跳过，避免重复推送
+
+另外仓库内还提供了 `.github/workflows/daily-fallback.yml`：
+
+- GitHub Actions 会在上海时间 `08:35` 到 `11:35` 之间每小时检查一次
+- 如果本地主链路已经成功发送，会直接跳过
+- 如果本地主链路失败，会复用 `daily-x-signal schedule-tick --force` 做兜底补发
 
 安装方式：
 

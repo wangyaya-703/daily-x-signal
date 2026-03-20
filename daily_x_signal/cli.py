@@ -8,20 +8,21 @@ from pathlib import Path
 from .config import AppConfig
 from .collector import (
     authors_from_cache,
-    collect_authors,
     collect_home_candidates,
     collect_posts_for_authors,
     dedupe_posts,
     hydrate_threads,
     limit_posts_per_author,
     prioritize_authors,
+    sync_following,
 )
 from .core_authors import author_stats_from_history, build_core_pool, load_history, save_history, update_history
-from .feishu import deliver_feishu
+from .feishu import deliver_feishu, deliver_feishu_bitable
 from .github_fallback import sync_success_marker
-from .llm import LLMClient, apply_llm_summary, extract_llm_watchlist
+from .llm import LLMClient, apply_llm_summary, extract_llm_overview, extract_llm_watchlist
 from .models import Report
-from .report import fallback_enrich, write_outputs
+from .personalization import build_interest_profile
+from .report import build_report_overview, fallback_enrich, write_outputs
 from .scheduler import load_scheduler_state, record_scheduler_result, should_run_scheduler
 from .scoring import rank_posts, suggested_authors
 from .store import load_json, save_json
@@ -50,9 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_sync_authors(config: dict, client: XReachClient) -> int:
-    authors = collect_authors(client, config)
+    sync_result = sync_following(client, config)
+    authors = sync_result["authors"]
     payload = {
         "refreshed_at": datetime.now().isoformat(),
+        "status": sync_result["status"],
         "authors": [author.raw for author in authors],
     }
     save_json(FOLLOWING_CACHE_PATH, payload)
@@ -83,22 +86,34 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
         except Exception:
             home_candidates = []
 
-    authors = collect_authors(client, config)
+    sync_result = sync_following(client, config)
+    authors = sync_result["authors"]
+    following_status = sync_result["status"]
     following_cache_used = False
     if authors:
         save_json(
             FOLLOWING_CACHE_PATH,
-            {"refreshed_at": datetime.now().isoformat(), "authors": [author.raw for author in authors]},
+            {
+                "refreshed_at": datetime.now().isoformat(),
+                "status": following_status,
+                "authors": [author.raw for author in authors],
+            },
         )
     else:
-        authors = authors_from_cache(following_cache, int(config["x"].get("max_authors_per_run", 40)))
+        authors = authors_from_cache(following_cache, int(config["x"].get("max_authors_per_run", 0) or 0) or len(following_cache.get("authors", [])))
         following_cache_used = bool(authors)
+        following_status = following_cache.get("status", following_status)
+
+    if following_status.get("needs_confirmation") and bool(config["x"].get("require_following_confirmation", True)):
+        print(f"[warning] {following_status.get('reason')}")
 
     candidate_posts = list(home_candidates)
     if mode == "core_authors":
         pool = build_core_pool(history, config)
         core_handles = {item["handle"] for item in pool}
         authors = [author for author in authors if author.handle in core_handles]
+
+    interest_profile = build_interest_profile(config, authors, history)
     prioritized_authors = prioritize_authors(
         authors,
         home_candidates,
@@ -107,20 +122,25 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
     if prioritized_authors:
         candidate_posts.extend(collect_posts_for_authors(client, prioritized_authors, config, window))
     candidate_posts = dedupe_posts(candidate_posts, bool(config["x"].get("dedupe_by_conversation", True)))
-    ranked = rank_posts(candidate_posts, config, author_stats)
+    ranked = rank_posts(candidate_posts, config, author_stats, interest_profile=interest_profile)
     ranked = limit_posts_per_author(ranked, int(config["ranking"].get("max_posts_per_author", 2)))
     top_n = args.top_n or int(config["profile"].get("digest_top_n", 10))
     hydrate_threads(client, ranked, int(config["x"].get("thread_fetch_top_n", 12)))
 
     llm_client = LLMClient(config)
-    llm_payload = llm_client.summarize_posts(ranked[: int(config["llm"].get("max_input_posts", 12))])
+    llm_payload = llm_client.summarize_posts(
+        ranked[: int(config["llm"].get("max_input_posts", 12))],
+        interest_profile=interest_profile,
+    )
     must_read_id = apply_llm_summary(ranked, llm_payload)
     llm_watchlist = extract_llm_watchlist(llm_payload)
+    llm_overview = extract_llm_overview(llm_payload)
     fallback_enrich(ranked[:top_n])
 
     top_posts = ranked[:top_n]
     must_read = next((post for post in top_posts if post.id == must_read_id), top_posts[0] if top_posts else None)
     watchlist = merge_watchlists(suggested_authors(top_posts, author_stats), llm_watchlist)
+    overview_bullets, section_stats = build_report_overview(top_posts, interest_profile, llm_overview, following_status)
     report = Report(
         generated_at=datetime.now(window.end.tzinfo),
         window_start=window.start,
@@ -129,10 +149,14 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
         top_posts=top_posts,
         must_read=must_read,
         watchlist_authors=watchlist,
+        overview_bullets=overview_bullets,
+        section_stats=section_stats,
         metadata={
             "candidate_count": len(candidate_posts),
             "author_count": len(prioritized_authors or authors),
             "following_cache_used": following_cache_used,
+            "following_status": following_status,
+            "interest_profile": interest_profile,
             "llm_enabled": llm_client.is_enabled(),
         },
     )
@@ -151,12 +175,15 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
     core_pool = build_core_pool(history, config)
     save_json(CORE_POOL_PATH, {"generated_at": report.generated_at.isoformat(), "authors": core_pool})
     feishu_preview_path, feishu_status = deliver_feishu(report, config)
+    bitable_preview_path, bitable_record_id = deliver_feishu_bitable(report, config)
     return {
         "report": report,
         "md_path": md_path,
         "json_path": json_path,
         "feishu_preview_path": feishu_preview_path,
         "feishu_status": feishu_status,
+        "bitable_preview_path": bitable_preview_path,
+        "bitable_record_id": bitable_record_id,
         "core_pool_size": len(core_pool),
     }
 
@@ -180,12 +207,18 @@ def cmd_generate(args: argparse.Namespace, config: dict, client: XReachClient) -
     json_path = result.get("json_path")
     feishu_preview_path = result.get("feishu_preview_path")
     feishu_status = result.get("feishu_status")
+    bitable_preview_path = result.get("bitable_preview_path")
+    bitable_record_id = result.get("bitable_record_id")
     print(f"Markdown: {md_path}")
     print(f"JSON: {json_path}")
     if feishu_preview_path:
         print(f"Feishu preview: {feishu_preview_path}")
     if feishu_status:
         print(f"Feishu status: {feishu_status}")
+    if bitable_preview_path:
+        print(f"Feishu bitable preview: {bitable_preview_path}")
+    if bitable_record_id:
+        print(f"Feishu bitable record: {bitable_record_id}")
     print(f"Core author pool size: {result.get('core_pool_size', 0)}")
     return 0
 

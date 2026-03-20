@@ -6,6 +6,7 @@ from typing import Any
 
 import requests
 
+from .feishu_bitable import upsert_feishu_bitable
 from .models import Report
 from .store import save_json
 
@@ -14,6 +15,7 @@ def build_feishu_card(report: Report, config: dict[str, Any]) -> dict[str, Any]:
     theme = config["outputs"]["feishu"].get("card_theme", "blue")
     top_n = int(config["outputs"]["feishu"].get("top_n", 10))
     top_posts = report.top_posts[: min(len(report.top_posts), top_n)]
+    stats = report.section_stats or {}
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
@@ -21,10 +23,21 @@ def build_feishu_card(report: Report, config: dict[str, Any]) -> dict[str, Any]:
                 f"**时间窗口**：{report.window_start.strftime('%m-%d %H:%M')} -> "
                 f"{report.window_end.strftime('%m-%d %H:%M')}\n"
                 f"**候选**：{report.metadata.get('candidate_count', 0)} 条  "
-                f"**作者**：{report.metadata.get('author_count', 0)} 位"
+                f"**作者**：{report.metadata.get('author_count', 0)} 位  "
+                f"**高匹配**：{stats.get('high_fit_posts', 0)} 条"
             ),
-        }
+        },
+        {
+            "tag": "note",
+            "elements": [
+                {"tag": "plain_text", "content": f"高信号: {stats.get('high_signal_posts', 0)}"},
+                {"tag": "plain_text", "content": f"主线: {'、'.join(stats.get('top_topics', [])[:3]) or '暂无'}"},
+            ],
+        },
     ]
+    if report.overview_bullets:
+        elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": "**今日概览**"}])
+        elements.extend({"tag": "markdown", "content": f"- {bullet}"} for bullet in report.overview_bullets[:4])
     if report.must_read:
         elements.extend(
             [
@@ -98,24 +111,13 @@ def deliver_feishu(report: Report, config: dict[str, Any]) -> tuple[Path | None,
     return preview_path, response.status_code
 
 
+def deliver_feishu_bitable(report: Report, config: dict[str, Any]) -> tuple[Path | None, str | None]:
+    return upsert_feishu_bitable(report, config, get_tenant_access_token)
+
+
 def _send_app_message(config: dict[str, Any], receive_id: str, card: dict[str, Any]) -> requests.Response:
-    feishu_cfg = config["outputs"]["feishu"]
-    app_id = _resolve_value(feishu_cfg.get("app_id"), feishu_cfg.get("app_id_env", ""))
-    app_secret = _resolve_value(feishu_cfg.get("app_secret"), feishu_cfg.get("app_secret_env", ""))
-    receive_id_type = str(feishu_cfg.get("receive_id_type", "open_id")).strip() or "open_id"
-    if not app_id or not app_secret:
-        raise ValueError("Feishu app delivery requires app_id and app_secret.")
-
-    token_response = requests.post(
-        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-        json={"app_id": app_id, "app_secret": app_secret},
-        timeout=30,
-    )
-    token_response.raise_for_status()
-    tenant_access_token = token_response.json().get("tenant_access_token")
-    if not tenant_access_token:
-        raise ValueError(f"Missing tenant_access_token: {token_response.text}")
-
+    tenant_access_token = get_tenant_access_token(config)
+    receive_id_type = str(config["outputs"]["feishu"].get("receive_id_type", "open_id")).strip() or "open_id"
     response = requests.post(
         f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={receive_id_type}",
         headers={
@@ -134,6 +136,25 @@ def _send_app_message(config: dict[str, Any], receive_id: str, card: dict[str, A
     if payload.get("code") != 0:
         raise ValueError(f"Feishu app delivery failed: {payload}")
     return response
+
+
+def get_tenant_access_token(config: dict[str, Any]) -> str:
+    feishu_cfg = config["outputs"]["feishu"]
+    app_id = _resolve_value(feishu_cfg.get("app_id"), feishu_cfg.get("app_id_env", ""))
+    app_secret = _resolve_value(feishu_cfg.get("app_secret"), feishu_cfg.get("app_secret_env", ""))
+    if not app_id or not app_secret:
+        raise ValueError("Feishu app delivery requires app_id and app_secret.")
+
+    token_response = requests.post(
+        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+        json={"app_id": app_id, "app_secret": app_secret},
+        timeout=30,
+    )
+    token_response.raise_for_status()
+    tenant_access_token = token_response.json().get("tenant_access_token")
+    if not tenant_access_token:
+        raise ValueError(f"Missing tenant_access_token: {token_response.text}")
+    return str(tenant_access_token)
 
 
 def _resolve_value(raw_value: Any, env_name: str) -> str | None:
