@@ -17,6 +17,7 @@ def build_feishu_card(report: Report, config: dict[str, Any]) -> dict[str, Any]:
     top_posts = report.top_posts[: min(len(report.top_posts), top_n)]
     stats = report.section_stats or {}
     elements: list[dict[str, Any]] = [
+        {"tag": "markdown", "content": "**🧭 今日概览**"},
         {
             "tag": "markdown",
             "content": (
@@ -36,13 +37,12 @@ def build_feishu_card(report: Report, config: dict[str, Any]) -> dict[str, Any]:
         },
     ]
     if report.overview_bullets:
-        elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": "**今日概览**"}])
         elements.extend({"tag": "markdown", "content": f"- {bullet}"} for bullet in report.overview_bullets[:4])
     if report.must_read:
         elements.extend(
             [
                 {"tag": "hr"},
-                {"tag": "markdown", "content": f"**今日必读**：[{report.must_read.author.handle}]({report.must_read.url})"},
+                {"tag": "markdown", "content": f"**🎯 今日必读**：[{report.must_read.author.handle}]({report.must_read.url})"},
                 {"tag": "markdown", "content": report.must_read.why_it_matters},
                 {
                     "tag": "markdown",
@@ -50,17 +50,19 @@ def build_feishu_card(report: Report, config: dict[str, Any]) -> dict[str, Any]:
                 },
             ]
         )
-    elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": f"**Top {len(top_posts)} 摘要**"}])
+    elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": f"**📊 Top {len(top_posts)} 贴分析**"}])
     for idx, post in enumerate(top_posts, start=1):
-        lines = [
-            f"**#{idx} @{post.author.handle}**",
-            post.why_it_matters,
-            *[f"- {bullet}" for bullet in post.summary_bullets[:3]],
-            f"[查看原帖]({post.url})",
+        analysis_lines = [
+            f"**TOP {idx}**  @{post.author.handle}",
+            f"**价值判断**：{post.why_it_matters}",
         ]
-        elements.append({"tag": "markdown", "content": "\n".join(lines)})
+        if post.summary_bullets:
+            analysis_lines.append("**你该看什么**")
+            analysis_lines.extend(f"- {bullet}" for bullet in post.summary_bullets[:3])
+        analysis_lines.append(f"[原帖]({post.url})")
+        elements.append({"tag": "markdown", "content": "\n".join(analysis_lines)})
     if report.watchlist_authors:
-        elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": "**建议额外关注**"}])
+        elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": "**👀 建议额外关注**"}])
         for item in report.watchlist_authors[:5]:
             elements.append({"tag": "markdown", "content": f"- @{item.get('handle', '')}：{item.get('reason', '')}"})
     if config["outputs"]["feishu"].get("mention_all", False):
