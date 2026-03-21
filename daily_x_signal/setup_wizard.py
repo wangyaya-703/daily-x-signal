@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .collector import sync_following
 from .config import AppConfig, deep_merge, save_yaml
@@ -34,10 +36,19 @@ def run_setup(
 
     viewer_handle = _ask("X handle", str(config.get("x", {}).get("viewer_handle") or ""))
     viewer_user_id = _ask("X user id", str(config.get("x", {}).get("viewer_user_id") or ""))
+    proxy_default = str(
+        config.get("x", {}).get("proxy_url")
+        or os.getenv("DAILY_X_SIGNAL_XREACH_PROXY")
+        or os.getenv("XREACH_PROXY")
+        or ""
+    )
+    proxy_url = _ask("XReach proxy URL（可留空）", proxy_default)
     if viewer_handle:
         config.setdefault("x", {})["viewer_handle"] = viewer_handle
     if viewer_user_id:
         config.setdefault("x", {})["viewer_user_id"] = viewer_user_id
+    config.setdefault("x", {})["proxy_url"] = proxy_url or None
+    client = XReachClient(binary=client.binary, workdir=client.workdir, proxy=proxy_url or None)
 
     checks = collect_setup_checks(config, client, dotenv_values)
     print_section("基础检查")
@@ -171,6 +182,7 @@ def run_setup(
         "x": {
             "viewer_handle": viewer_handle or None,
             "viewer_user_id": viewer_user_id or None,
+            "proxy_url": proxy_url or None,
             "expected_following_count": int(expected_following_count) if str(expected_following_count).strip().isdigit() else None,
             "following_count_confirmed": following_confirmed,
             "include_replies": include_replies,
@@ -194,6 +206,7 @@ def run_setup(
             [
                 ["viewer_handle", final_override.get("x", {}).get("viewer_handle", "")],
                 ["viewer_user_id", final_override.get("x", {}).get("viewer_user_id", "")],
+                ["proxy_url", final_override.get("x", {}).get("proxy_url", "")],
                 ["expected_following_count", final_override.get("x", {}).get("expected_following_count", "")],
                 ["following_count_confirmed", bool_text(bool(final_override.get("x", {}).get("following_count_confirmed", False)))],
                 ["preferred_topics", "、".join(topic_labels(final_override.get("profile", {}).get("preferred_topics", [])))],
@@ -229,25 +242,39 @@ def run_setup(
 def collect_setup_checks(config: dict[str, Any], client: XReachClient, dotenv_values: dict[str, str]) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     xreach_binary = shutil.which(client.binary) if not Path(client.binary).exists() else client.binary
+    xreach_ready = bool(xreach_binary) and os.access(str(xreach_binary), os.X_OK)
+    if xreach_binary and not xreach_ready:
+        xreach_detail = f"{xreach_binary}（存在但不可执行）"
+    else:
+        xreach_detail = xreach_binary or "未找到 xreach"
     checks.append(
         {
             "key": "xreach_binary",
             "name": "xreach binary",
-            "ok": bool(xreach_binary),
-            "detail": xreach_binary or "未找到 xreach",
+            "ok": xreach_ready,
+            "detail": xreach_detail,
         }
     )
+    proxy_url = str(config.get("x", {}).get("proxy_url") or "").strip()
+    proxy_ok, proxy_detail = _probe_proxy_url(proxy_url)
+    checks.append({"key": "xreach_proxy", "name": "xreach proxy", "ok": proxy_ok, "detail": proxy_detail})
     auth_ok = False
     auth_detail = "xreach 未安装，无法检查认证。"
-    if xreach_binary:
-        proc = subprocess.run(
-            [client.binary, "auth", "check"],
-            cwd=Path.cwd(),
-            capture_output=True,
-            text=True,
-        )
-        auth_ok = proc.returncode == 0
-        auth_detail = (proc.stdout or proc.stderr or "").strip().splitlines()[0] if (proc.stdout or proc.stderr) else "已检查"
+    if xreach_ready:
+        try:
+            proc = subprocess.run(
+                [client.binary, "auth", "check"],
+                cwd=Path.cwd(),
+                capture_output=True,
+                text=True,
+            )
+            auth_ok = proc.returncode == 0
+            auth_detail = (proc.stdout or proc.stderr or "").strip().splitlines()[0] if (proc.stdout or proc.stderr) else "已检查"
+        except OSError as exc:
+            auth_ok = False
+            auth_detail = f"无法执行 xreach auth check：{exc.strerror or exc}"
+    elif xreach_binary:
+        auth_detail = "xreach 存在但不可执行。"
     checks.append({"key": "xreach_auth", "name": "xreach auth", "ok": auth_ok, "detail": auth_detail})
 
     viewer_handle = str(config.get("x", {}).get("viewer_handle") or "").strip()
@@ -317,6 +344,26 @@ def _resolve_config_value(raw_value: Any, env_name: Any, dotenv_values: dict[str
         if value:
             return value
     return None
+
+
+def _probe_proxy_url(proxy_url: str) -> tuple[bool, str]:
+    if not proxy_url:
+        return True, "未配置，默认直连"
+    try:
+        parsed = urlparse(proxy_url if "://" in proxy_url else f"http://{proxy_url}")
+    except ValueError:
+        return False, "proxy_url 格式无效"
+    host = parsed.hostname or ""
+    port = parsed.port
+    if not host or not port:
+        return False, "proxy_url 缺少 host/port"
+    if host not in {"127.0.0.1", "localhost"}:
+        return True, proxy_url
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return True, proxy_url
+    except OSError:
+        return False, f"{proxy_url} 未监听"
 
 
 def _save_following_cache(path: Path, authors: list[Any], status: dict[str, Any]) -> None:

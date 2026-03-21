@@ -7,18 +7,25 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 class XReachError(RuntimeError):
     pass
 
 
 class XReachClient:
-    def __init__(self, binary: str = "xreach", workdir: str | Path = ".") -> None:
+    def __init__(self, binary: str = "xreach", workdir: str | Path = ".", proxy: str | None = None) -> None:
         self.binary = self._resolve_binary(binary)
         self.workdir = Path(workdir)
+        self.proxy = proxy
 
     def run_json(self, *args: str) -> Any:
-        cmd = [self.binary, *args, "--json"]
+        cmd = [self.binary]
+        proxy_url = self._resolve_proxy_url()
+        if proxy_url:
+            cmd.extend(["--proxy", proxy_url])
+        cmd.extend([*args, "--json"])
         proc = subprocess.run(
             cmd,
             cwd=self.workdir,
@@ -51,14 +58,15 @@ class XReachClient:
                 """
 import { pathToFileURL } from 'node:url';
 
-const [moduleRoot, userId, countArg, cursorArg] = process.argv.slice(1);
+                const [moduleRoot, userId, countArg, cursorArg] = process.argv.slice(1);
 const { XClient } = await import(pathToFileURL(`${moduleRoot}/dist/lib/client/index.js`).href);
 const { SessionManager } = await import(pathToFileURL(`${moduleRoot}/dist/lib/auth/session.js`).href);
 const session = new SessionManager().load();
 if (!session?.authToken || !session?.ct0) {
   throw new Error('Not authenticated');
 }
-const client = new XClient(session, {});
+const proxyArg = process.env.DAILY_X_SIGNAL_XREACH_PROXY || process.env.XREACH_PROXY || '';
+const client = new XClient(session, proxyArg ? { proxy: proxyArg } : {});
 const result = await client.getFollowing(userId, parseInt(countArg, 10), cursorArg || undefined);
 console.log(JSON.stringify(result));
                 """,
@@ -66,6 +74,7 @@ console.log(JSON.stringify(result));
                 user_id,
                 str(count),
                 cursor or "",
+                env_updates={"DAILY_X_SIGNAL_XREACH_PROXY": proxy_url} if (proxy_url := self._resolve_proxy_url()) else None,
             )
             items.extend(payload.get("items", []))
             cursor = payload.get("cursor")
@@ -83,13 +92,17 @@ console.log(JSON.stringify(result));
     def thread(self, tweet_id_or_url: str) -> list[dict[str, Any]]:
         return self.run_json("thread", tweet_id_or_url)
 
-    def _run_node_json(self, script: str, *args: str) -> Any:
+    def _run_node_json(self, script: str, *args: str, env_updates: dict[str, str] | None = None) -> Any:
         cmd = ["node", "--input-type=module", "-e", script, *args]
+        env = os.environ.copy()
+        if env_updates:
+            env.update(env_updates)
         proc = subprocess.run(
             cmd,
             cwd=self.workdir,
             capture_output=True,
             text=True,
+            env=env,
         )
         if proc.returncode != 0:
             raise XReachError(proc.stderr.strip() or proc.stdout.strip() or "Node 桥接执行失败")
@@ -133,3 +146,25 @@ console.log(JSON.stringify(result));
             return str(fallback)
 
         return binary
+
+    def _resolve_proxy_url(self) -> str | None:
+        if self.proxy:
+            return self.proxy
+        for env_name in ("DAILY_X_SIGNAL_XREACH_PROXY", "XREACH_PROXY"):
+            value = os.getenv(env_name)
+            if value:
+                return value
+        return self._load_proxy_from_local_config()
+
+    def _load_proxy_from_local_config(self) -> str | None:
+        config_path = self.workdir / "config" / "local.yaml"
+        if not config_path.exists():
+            return None
+        try:
+            payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+        proxy_url = payload.get("x", {}).get("proxy_url")
+        if not proxy_url:
+            return None
+        return str(proxy_url).strip() or None
