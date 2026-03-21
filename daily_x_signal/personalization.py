@@ -225,12 +225,13 @@ def snapshot_following_status(
     max_pages = int(x_cfg.get("following_sync_max_pages", 0) or 0)
     warn_ratio = float(x_cfg.get("following_completion_ratio_warn_threshold", 0.85))
     confirmed = bool(x_cfg.get("following_count_confirmed", False))
+    expected_explicit_zero = str(expected_following).strip() == "0"
 
     completion_ratio = round(synced_count / expected, 4) if expected > 0 else None
     is_complete = not has_more and (expected == 0 or synced_count >= max(int(expected * warn_ratio), 1))
     needs_confirmation = bool(x_cfg.get("require_following_confirmation", True)) and not confirmed
     reasons: list[str] = []
-    if synced_count == 0:
+    if synced_count == 0 and not (expected_explicit_zero and confirmed and not has_more):
         is_complete = False
         reasons.append("当前未同步到任何 following，建议检查 viewer 配置或 X 登录态。")
     if has_more:
@@ -243,7 +244,7 @@ def snapshot_following_status(
         reasons.append("following 列表已达到当前配置下的完整性要求。")
     return {
         "synced_count": synced_count,
-        "expected_following_count": expected if expected > 0 else None,
+        "expected_following_count": expected if expected > 0 or expected_explicit_zero else None,
         "completion_ratio": completion_ratio,
         "has_more": has_more,
         "is_complete": is_complete,

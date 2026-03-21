@@ -83,6 +83,27 @@ class PersonalizationTests(unittest.TestCase):
         self.assertFalse(status["is_complete"])
         self.assertIn("未同步到任何 following", status["reason"])
 
+    def test_snapshot_following_status_allows_confirmed_zero_following(self) -> None:
+        config = {
+            **self.config,
+            "x": {
+                **self.config["x"],
+                "expected_following_count": 0,
+                "following_count_confirmed": True,
+            },
+        }
+        status = snapshot_following_status(
+            config,
+            [],
+            payload_meta={"has_more": False},
+            viewer_profile=None,
+        )
+
+        self.assertTrue(status["is_complete"])
+        self.assertFalse(status["needs_confirmation"])
+        self.assertEqual(status["expected_following_count"], 0)
+        self.assertIn("following 列表已达到当前配置下的完整性要求", status["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()
