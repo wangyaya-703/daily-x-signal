@@ -13,6 +13,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         text = SKILL_PATH.read_text(encoding="utf-8")
         self.assertIn("user-invocable: true", text)
         self.assertIn('emoji: "📰"', text)
+        self.assertIn('version: "2026.03.22.2"', text)
 
     def test_skill_includes_openclaw_workspace_bootstrap_path(self) -> None:
         text = SKILL_PATH.read_text(encoding="utf-8")
@@ -69,6 +70,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         self.assertIn("默认只收集 handle", text)
         self.assertIn("只有 following 同步失败时", text)
         self.assertIn("自动执行一次 `daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml`", text)
+        self.assertIn("建议新开一个 OpenClaw 会话", text)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ from .personalization import build_interest_profile
 from .report import build_report_overview, fallback_enrich, write_outputs
 from .scheduler import load_scheduler_state, record_scheduler_result, should_run_scheduler
 from .scoring import rank_posts, suggested_authors
+from .skill_sync import inspect_skill_sync
 from .setup_wizard import run_setup
 from .store import load_json, save_json
 from .window import resolve_window
@@ -35,6 +36,8 @@ from .x_client import XReachClient
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = _PROJECT_ROOT / "config" / "default.yaml"
 LOCAL_CONFIG_PATH = _PROJECT_ROOT / "config" / "local.yaml"
+REPO_SKILL_PATH = _PROJECT_ROOT / "skills" / "daily-x-signal" / "SKILL.md"
+OPENCLAW_SKILL_PATH = Path.home() / ".openclaw" / "skills" / "daily-x-signal" / "SKILL.md"
 STATE_PATH = _PROJECT_ROOT / "state" / "history.json"
 FOLLOWING_CACHE_PATH = _PROJECT_ROOT / "state" / "following_cache.json"
 CORE_POOL_PATH = _PROJECT_ROOT / "state" / "core_authors.json"
@@ -609,6 +612,8 @@ def cmd_lab(config: dict, lab_args: argparse.Namespace) -> int:
 def main() -> int:
     import sys
 
+    _maybe_warn_skill_update()
+
     # lab 命令需要提前拦截，因为它有自己的参数解析器
     if len(sys.argv) >= 2 and sys.argv[1] == "lab":
         # 只解析 --config 和 --override-config（lab 之前的通用参数）
@@ -667,6 +672,25 @@ def merge_watchlists(primary: list[dict], secondary: list[dict]) -> list[dict]:
         seen.add(handle)
         merged.append(item)
     return merged
+
+
+def _maybe_warn_skill_update() -> None:
+    status = inspect_skill_sync(REPO_SKILL_PATH, OPENCLAW_SKILL_PATH)
+    if not status.get("needs_update"):
+        return
+    print_section("Skill Update")
+    print(
+        render_table(
+            ["Field", "Value"],
+            [
+                ["Repo Version", status.get("repo_version") or "unknown"],
+                ["Installed Version", status.get("installed_version") or "unknown"],
+                ["Status", "OpenClaw skill 副本比仓库旧，建议先同步"],
+                ["Sync Command", status.get("sync_command") or ""],
+                ["Next Step", "同步后建议新开一个 OpenClaw 会话，再继续配置或生成日报。"],
+            ],
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 ---
 name: daily-x-signal
+version: "2026.03.22.2"
 description: 从关注的 X 账号中生成高信号中文日报，并优先通过 CLI setup 完成引导式配置，再生成过去 24 小时或调度窗口内的日报。用户提到 X/Twitter 日报、过去 24 小时动态、重点帖子排序、今日必读、飞书卡片、帖子追踪表、首次配置日报机器人时，都应使用这个 skill，尤其是在 OpenClaw 远端环境中。
 metadata:
   trigger-hint: 当用户想配置或生成 X 日报、检查 daily-x-signal 是否可运行、补齐飞书和 xreach 环境、查看过去 24 小时值得看的帖子时使用。
@@ -150,6 +151,14 @@ enable_bitable=yes
 不要说“看看 setup 下一步是否允许补关键词”这类不确定表述；当前流程支持直接补充关键词，并会直接写入配置。
 像 `digest_top_n`、`include_replies`、`enable_bitable` 这类运行偏好，也应该放在这张总表单里一起收，不要单独追问。
 用户确认写入配置后，应该直接自动执行一次 `daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml`，让用户马上确认第一版日报是否符合预期。
+
+## Skill 更新提示
+
+如果仓库里的 `skills/daily-x-signal/SKILL.md` 比 `~/.openclaw/skills/daily-x-signal/SKILL.md` 更新，应该明确提示用户先同步 skill，再继续使用。
+
+- 可以直接同步：
+  - `cp /path/to/repo/skills/daily-x-signal/SKILL.md ~/.openclaw/skills/daily-x-signal/SKILL.md`
+- 同步后建议新开一个 OpenClaw 会话，再继续配置或生成日报。
 
 ## 生成日报
 
