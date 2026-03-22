@@ -85,10 +85,10 @@ def deliver_feishu(report: Report, config: dict[str, Any]) -> tuple[Path | None,
     preview_dir = Path(feishu_cfg["preview_directory"])
     preview_dir.mkdir(parents=True, exist_ok=True)
     preview_path = preview_dir / f"daily-brief-{report.generated_at.strftime('%Y-%m-%d')}.json"
-    delivery_type = str(feishu_cfg.get("delivery_type", "webhook")).strip().lower()
+    delivery_type = _resolve_delivery_type(config)
 
     if delivery_type == "app":
-        receive_id = _resolve_value(feishu_cfg.get("receive_id"), feishu_cfg.get("receive_id_env", ""))
+        receive_id = _resolve_feishu_value(config, "receive_id")
         payload = {
             "receive_id": receive_id or "",
             "msg_type": "interactive",
@@ -119,7 +119,7 @@ def deliver_feishu_bitable(report: Report, config: dict[str, Any]) -> tuple[Path
 
 def _send_app_message(config: dict[str, Any], receive_id: str, card: dict[str, Any]) -> requests.Response:
     tenant_access_token = get_tenant_access_token(config)
-    receive_id_type = str(config["outputs"]["feishu"].get("receive_id_type", "open_id")).strip() or "open_id"
+    receive_id_type = _resolve_receive_id_type(config)
     response = requests.post(
         f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={receive_id_type}",
         headers={
@@ -141,9 +141,8 @@ def _send_app_message(config: dict[str, Any], receive_id: str, card: dict[str, A
 
 
 def get_tenant_access_token(config: dict[str, Any]) -> str:
-    feishu_cfg = config["outputs"]["feishu"]
-    app_id = _resolve_value(feishu_cfg.get("app_id"), feishu_cfg.get("app_id_env", ""))
-    app_secret = _resolve_value(feishu_cfg.get("app_secret"), feishu_cfg.get("app_secret_env", ""))
+    app_id = _resolve_feishu_value(config, "app_id")
+    app_secret = _resolve_feishu_value(config, "app_secret")
     if not app_id or not app_secret:
         raise ValueError("Feishu app delivery requires app_id and app_secret.")
 
@@ -167,3 +166,49 @@ def _resolve_value(raw_value: Any, env_name: str) -> str | None:
         if value:
             return value
     return None
+
+
+def _resolve_delivery_type(config: dict[str, Any]) -> str:
+    feishu_cfg = config["outputs"]["feishu"]
+    delivery_type = str(feishu_cfg.get("delivery_type", "webhook")).strip().lower()
+    if _is_openclaw_host(config) and bool(config.get("openclaw", {}).get("use_linked_feishu_bot", True)):
+        return "app"
+    return delivery_type
+
+
+def _resolve_feishu_value(config: dict[str, Any], key: str) -> str | None:
+    feishu_cfg = config["outputs"]["feishu"]
+    env_key_map = {
+        "app_id": "app_id_env",
+        "app_secret": "app_secret_env",
+        "receive_id": "receive_id_env",
+    }
+    resolved = _resolve_value(feishu_cfg.get(key), str(feishu_cfg.get(env_key_map.get(key, ""), "")))
+    if resolved:
+        return resolved
+    if not (_is_openclaw_host(config) and bool(config.get("openclaw", {}).get("use_linked_feishu_bot", True))):
+        return None
+    openclaw_cfg = config.get("openclaw", {})
+    fallback_env_map = {
+        "app_id": "bot_app_id_env",
+        "app_secret": "bot_app_secret_env",
+        "receive_id": "bot_receive_id_env",
+    }
+    env_name = str(openclaw_cfg.get(fallback_env_map[key], "") or "")
+    if not env_name:
+        return None
+    value = os.getenv(env_name)
+    return value or None
+
+
+def _resolve_receive_id_type(config: dict[str, Any]) -> str:
+    receive_id_type = str(config["outputs"]["feishu"].get("receive_id_type", "")).strip()
+    if receive_id_type:
+        return receive_id_type
+    if _is_openclaw_host(config) and bool(config.get("openclaw", {}).get("use_linked_feishu_bot", True)):
+        return str(config.get("openclaw", {}).get("bot_receive_id_type", "open_id")).strip() or "open_id"
+    return "open_id"
+
+
+def _is_openclaw_host(config: dict[str, Any]) -> bool:
+    return str(config.get("runtime", {}).get("host_mode", "standalone")).strip().lower() == "openclaw"

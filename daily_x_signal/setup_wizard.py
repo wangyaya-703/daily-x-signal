@@ -182,8 +182,14 @@ def run_setup(
     reply_like_threshold = setup_choices["reply_like_threshold"]
     enable_feishu = setup_choices["enable_feishu"]
     enable_bitable = setup_choices["enable_bitable"]
+    bitable_ready = setup_choices["bitable_ready"]
+    host_mode = setup_choices["host_mode"]
+    host_mode_patch = _host_mode_patch(host_mode, config)
 
     patch = {
+        "runtime": {
+            "host_mode": host_mode,
+        },
         "profile": {
             "preferred_topics": selected_topics,
             "interest_keywords": final_keywords,
@@ -200,8 +206,13 @@ def run_setup(
             "include_replies": include_replies,
             "reply_like_threshold": int(reply_like_threshold) if str(reply_like_threshold).strip().isdigit() else config.get("x", {}).get("reply_like_threshold", 100),
         },
+        "scheduler": _scheduler_patch(setup_choices["push_time"], config),
+        "github_fallback": host_mode_patch["github_fallback"],
+        "openclaw": host_mode_patch["openclaw"],
         "outputs": {
             "feishu": {
+                "delivery_type": host_mode_patch["feishu_delivery_type"],
+                "receive_id_type": host_mode_patch["feishu_receive_id_type"],
                 "enabled": enable_feishu,
             },
             "feishu_bitable": {
@@ -219,6 +230,8 @@ def run_setup(
                 ["viewer_handle", _mask_value(str(final_override.get("x", {}).get("viewer_handle", "") or ""))],
                 ["viewer_user_id", "已配置" if final_override.get("x", {}).get("viewer_user_id") else "留空"],
                 ["proxy_url", final_override.get("x", {}).get("proxy_url", "") or "留空"],
+                ["host_mode", final_override.get("runtime", {}).get("host_mode", "")],
+                ["push_time", _format_push_time(final_override)],
                 ["expected_following_count", final_override.get("x", {}).get("expected_following_count", "")],
                 ["following_count_confirmed", bool_text(bool(final_override.get("x", {}).get("following_count_confirmed", False)))],
                 ["preferred_topics", "、".join(topic_labels(final_override.get("profile", {}).get("preferred_topics", [])))],
@@ -228,6 +241,7 @@ def run_setup(
                 ["digest_top_n", final_override.get("profile", {}).get("digest_top_n", "")],
                 ["include_replies", bool_text(bool(final_override.get("x", {}).get("include_replies", True)))],
                 ["reply_like_threshold", final_override.get("x", {}).get("reply_like_threshold", "")],
+                ["feishu.delivery_type", final_override.get("outputs", {}).get("feishu", {}).get("delivery_type", "")],
                 ["feishu.enabled", bool_text(bool(final_override.get("outputs", {}).get("feishu", {}).get("enabled", False)))],
                 ["feishu_bitable.enabled", bool_text(bool(final_override.get("outputs", {}).get("feishu_bitable", {}).get("enabled", False)))],
             ],
@@ -247,10 +261,12 @@ def run_setup(
     ]
     if final_override.get("outputs", {}).get("feishu_bitable", {}).get("enabled", False):
         next_rows.append(["查看帖子追踪表", bitable_app_url({"outputs": {"feishu_bitable": final_override.get("outputs", {}).get("feishu_bitable", {})}}) or ""])
+    if host_mode == "openclaw":
+        next_rows.append(["OpenClaw HEARTBEAT", f"daily-x-signal schedule-tick --override-config {target_config_path}"])
     print(render_table(["Next Step", "Command"], next_rows))
     if post_write_generate is not None:
         print_section("首版日报预览")
-        print("已按当前配置自动执行 rolling_24h generate，供你确认首版结果。")
+        print("已按当前配置自动执行 rolling_24h generate 预览；本次不会实际推送到飞书或帖子追踪表。")
         return post_write_generate(target_config_path)
     return 0
 
@@ -311,9 +327,9 @@ def collect_setup_checks(config: dict[str, Any], client: XReachClient, dotenv_va
             "detail": "已配置" if _resolve_config_value(config.get("llm", {}).get("api_key"), config.get("llm", {}).get("api_key_env"), dotenv_values) else "缺少 llm api key",
         }
     )
-    feishu_app = _resolve_config_value(config.get("outputs", {}).get("feishu", {}).get("app_id"), config.get("outputs", {}).get("feishu", {}).get("app_id_env"), dotenv_values)
-    feishu_secret = _resolve_config_value(config.get("outputs", {}).get("feishu", {}).get("app_secret"), config.get("outputs", {}).get("feishu", {}).get("app_secret_env"), dotenv_values)
-    feishu_receive = _resolve_config_value(config.get("outputs", {}).get("feishu", {}).get("receive_id"), config.get("outputs", {}).get("feishu", {}).get("receive_id_env"), dotenv_values)
+    feishu_app = _resolve_feishu_check_value(config, "app_id", dotenv_values)
+    feishu_secret = _resolve_feishu_check_value(config, "app_secret", dotenv_values)
+    feishu_receive = _resolve_feishu_check_value(config, "receive_id", dotenv_values)
     checks.append(
         {
             "key": "feishu_app",
@@ -360,6 +376,26 @@ def _resolve_config_value(raw_value: Any, env_name: Any, dotenv_values: dict[str
         if value:
             return value
     return None
+
+
+def _resolve_feishu_check_value(config: dict[str, Any], key: str, dotenv_values: dict[str, str]) -> str | None:
+    feishu_cfg = config.get("outputs", {}).get("feishu", {})
+    env_map = {
+        "app_id": "app_id_env",
+        "app_secret": "app_secret_env",
+        "receive_id": "receive_id_env",
+    }
+    resolved = _resolve_config_value(feishu_cfg.get(key), feishu_cfg.get(env_map[key]), dotenv_values)
+    if resolved:
+        return resolved
+    if _current_host_mode(config) != "openclaw" or not bool(config.get("openclaw", {}).get("use_linked_feishu_bot", True)):
+        return None
+    openclaw_env_map = {
+        "app_id": "bot_app_id_env",
+        "app_secret": "bot_app_secret_env",
+        "receive_id": "bot_receive_id_env",
+    }
+    return _resolve_config_value(None, config.get("openclaw", {}).get(openclaw_env_map[key]), dotenv_values)
 
 
 def _probe_proxy_url(proxy_url: str) -> tuple[bool, str]:
@@ -596,10 +632,12 @@ def _collect_preference_choices(
     interest_profile: dict[str, Any],
     existing_user_setup: bool,
 ) -> dict[str, Any]:
+    current_host_mode = _current_host_mode(config)
     current_mode = str(config.get("profile", {}).get("default_mode", "all_following"))
     current_top_n = int(config.get("profile", {}).get("digest_top_n", 10))
     current_include_replies = bool(config.get("x", {}).get("include_replies", True))
     current_reply_threshold = int(config.get("x", {}).get("reply_like_threshold", 100))
+    current_push_time = _format_push_time(config)
     feishu_default = bool(config.get("outputs", {}).get("feishu", {}).get("enabled", False))
     bitable_cfg = config.get("outputs", {}).get("feishu_bitable", {})
     bitable_ready = bool(bitable_cfg.get("app_token")) and bool(bitable_cfg.get("table_id"))
@@ -629,35 +667,58 @@ def _collect_preference_choices(
             render_table(
                 ["Field", "Default", "How to fill"],
                 [
+                    ["host_mode", current_host_mode, "standalone=自己推送；openclaw=复用 OpenClaw Bot + HEARTBEAT。"],
                     ["topics", default_topic_selection, "只需要确认推荐方向编号；留空采用推荐组合。"],
                     ["extra_keywords", "", "如果你想额外追踪论文、bench、产品名，再补少量关键词。"],
+                    ["push_time", current_push_time, "日报推送时间，格式 HH:MM。"],
                 ],
             )
         )
         print(render_table(["Default Keyword Write"], [[", ".join(recommended_keyword_write) or "暂无建议"]]))
+        host_mode = _ask_choice("选择运行宿主", ["standalone", "openclaw"], current_host_mode)
         topic_selection = _ask("选择关注方向编号（留空采用推荐组合）", default_topic_selection)
         extra_keywords = _split_csv(_ask("补充少量关键词（可留空）", ""))
+        push_time = _ask("设置日报推送时间（HH:MM）", current_push_time)
         selected_topics = _select_topics(topic_choices, topic_selection)
         final_keywords = _dedupe([*_build_recommended_keywords(interest_profile, selected_topics, existing_keywords), *extra_keywords])
         return {
+            "host_mode": host_mode,
             "selected_topics": selected_topics,
             "final_keywords": final_keywords,
             "disliked_keywords": existing_disliked_keywords,
             "expected_following_count": expected_default,
             "following_confirmed": confirmed_default,
+            "push_time": push_time,
             "default_mode": current_mode,
             "digest_top_n": current_top_n,
             "include_replies": current_include_replies,
             "reply_like_threshold": current_reply_threshold,
             "enable_feishu": feishu_default,
             "enable_bitable": existing_bitable_enabled,
+            "bitable_ready": bitable_ready,
         }
 
     style_choice = _infer_style_choice(current_mode, current_top_n, current_include_replies, current_reply_threshold)
-    output_choice = _infer_output_choice(feishu_default, existing_bitable_enabled)
+    host_mode = _ask_choice("选择运行宿主", ["standalone", "openclaw"], current_host_mode)
+    output_choice = _default_output_choice_for_host_mode(
+        host_mode,
+        feishu_default=feishu_default,
+        bitable_enabled=existing_bitable_enabled,
+        feishu_ready=_check_ok(checks, "feishu_app"),
+        bitable_ready=bitable_ready,
+    )
     need_following_confirm = bool(following_status.get("needs_confirmation", False)) or not confirmed_default
 
     print_section("快速选择")
+    print(
+        render_table(
+            ["Host Mode", "Meaning"],
+            [
+                ["standalone", "DailyXSignal 自己负责飞书直推、内部调度和 GitHub 兜底。"],
+                ["openclaw", "优先复用 OpenClaw 绑定的飞书 Bot，并由 HEARTBEAT 触发 schedule-tick。"],
+            ],
+        )
+    )
     print(
         render_table(
             ["Preset", "Style", "Meaning"],
@@ -675,6 +736,7 @@ def _collect_preference_choices(
             ],
         )
     )
+    print(render_table(["Schedule"], [[f"当前默认推送时间：{current_push_time}"]]))
     if need_following_confirm:
         print(render_table(["Following"], [[f"当前同步到 {following_status.get('synced_count', 0)} 个关注对象；如果看起来合理，就确认这个总数。"]]))
         expected_following_count = _ask("确认关注总数", expected_default)
@@ -684,6 +746,7 @@ def _collect_preference_choices(
         following_confirmed = confirmed_default
     selected_topics = _select_topics(topic_choices, _ask("选择关注方向编号（留空采用推荐组合）", default_topic_selection))
     extra_keywords = _split_csv(_ask("补充少量关键词（可留空）", ""))
+    push_time = _ask("设置日报推送时间（HH:MM）", current_push_time)
     style_choice = _ask_choice("选择阅读风格", list(STYLE_PRESETS.keys()), style_choice)
     output_choice = _ask_choice("选择输出方式", ["keep", "local_only", "card_only", "card_and_table"], output_choice)
 
@@ -691,22 +754,30 @@ def _collect_preference_choices(
     final_keywords = _dedupe([*_build_recommended_keywords(interest_profile, selected_topics, existing_keywords), *extra_keywords])
     enable_feishu, enable_bitable = _resolve_output_choice(output_choice, feishu_default, existing_bitable_enabled, bitable_ready)
     return {
+        "host_mode": host_mode,
         "selected_topics": selected_topics,
         "final_keywords": final_keywords,
         "disliked_keywords": existing_disliked_keywords,
         "expected_following_count": expected_following_count,
         "following_confirmed": following_confirmed,
+        "push_time": push_time,
         "default_mode": style["default_mode"],
         "digest_top_n": int(style["digest_top_n"]),
         "include_replies": bool(style["include_replies"]),
         "reply_like_threshold": int(style["reply_like_threshold"]),
         "enable_feishu": enable_feishu,
         "enable_bitable": enable_bitable,
+        "bitable_ready": bitable_ready,
     }
 
 
 def _build_recommended_keywords(interest_profile: dict[str, Any], selected_topics: list[str], existing_keywords: list[str]) -> list[str]:
     return _dedupe([*interest_profile.get("keywords", [])[:8], *topic_seed_keywords(selected_topics)[:8], *existing_keywords])[:12]
+
+
+def _current_host_mode(config: dict[str, Any]) -> str:
+    host_mode = str(config.get("runtime", {}).get("host_mode", "standalone")).strip().lower()
+    return host_mode if host_mode in {"standalone", "openclaw"} else "standalone"
 
 
 def _infer_style_choice(current_mode: str, current_top_n: int, current_include_replies: bool, current_reply_threshold: int) -> str:
@@ -725,6 +796,19 @@ def _infer_output_choice(feishu_enabled: bool, bitable_enabled: bool) -> str:
     return "local_only"
 
 
+def _default_output_choice_for_host_mode(
+    host_mode: str,
+    *,
+    feishu_default: bool,
+    bitable_enabled: bool,
+    feishu_ready: bool,
+    bitable_ready: bool,
+) -> str:
+    if host_mode == "openclaw" and feishu_ready:
+        return "card_and_table" if bitable_ready else "card_only"
+    return _infer_output_choice(feishu_default, bitable_enabled)
+
+
 def _resolve_output_choice(choice: str, feishu_default: bool, bitable_default: bool, bitable_ready: bool) -> tuple[bool, bool]:
     if choice == "keep":
         return feishu_default, bitable_default if bitable_ready else False
@@ -735,6 +819,75 @@ def _resolve_output_choice(choice: str, feishu_default: bool, bitable_default: b
     if choice == "card_and_table":
         return True, bitable_ready
     return feishu_default, bitable_default if bitable_ready else False
+
+
+def _format_push_time(config: dict[str, Any]) -> str:
+    scheduler_cfg = config.get("scheduler", {})
+    hour = int(scheduler_cfg.get("trigger_hour", 8))
+    minute = int(scheduler_cfg.get("trigger_minute", 30))
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _scheduler_patch(push_time: str, config: dict[str, Any]) -> dict[str, Any]:
+    parsed = _parse_time_hhmm(push_time)
+    if parsed is None:
+        return {}
+    trigger_hour, trigger_minute = parsed
+    deadline_total = (trigger_hour * 60 + trigger_minute + 180) % (24 * 60)
+    return {
+        "trigger_hour": trigger_hour,
+        "trigger_minute": trigger_minute,
+        "catchup_deadline_hour": deadline_total // 60,
+        "catchup_deadline_minute": deadline_total % 60,
+        "enabled": bool(config.get("scheduler", {}).get("enabled", True)),
+        "poll_interval_minutes": int(config.get("scheduler", {}).get("poll_interval_minutes", 15)),
+    }
+
+
+def _host_mode_patch(host_mode: str, config: dict[str, Any]) -> dict[str, Any]:
+    openclaw_cfg = config.get("openclaw", {})
+    github_fallback_cfg = config.get("github_fallback", {})
+    if host_mode == "openclaw":
+        return {
+            "github_fallback": {
+                **github_fallback_cfg,
+                "enabled": False,
+            },
+            "openclaw": {
+                **openclaw_cfg,
+                "enabled": True,
+                "use_linked_feishu_bot": True,
+                "use_heartbeat": True,
+            },
+            "feishu_delivery_type": "app",
+            "feishu_receive_id_type": str(openclaw_cfg.get("bot_receive_id_type", "open_id")).strip() or "open_id",
+        }
+    return {
+        "github_fallback": {
+            **github_fallback_cfg,
+            "enabled": bool(github_fallback_cfg.get("enabled", True)),
+        },
+        "openclaw": {
+            **openclaw_cfg,
+            "enabled": False,
+        },
+        "feishu_delivery_type": str(config.get("outputs", {}).get("feishu", {}).get("delivery_type", "webhook")).strip() or "webhook",
+        "feishu_receive_id_type": str(config.get("outputs", {}).get("feishu", {}).get("receive_id_type", "open_id")).strip() or "open_id",
+    }
+
+
+def _parse_time_hhmm(value: str) -> tuple[int, int] | None:
+    raw = value.strip()
+    if ":" not in raw:
+        return None
+    hour_text, minute_text = raw.split(":", 1)
+    if not hour_text.isdigit() or not minute_text.isdigit():
+        return None
+    hour = int(hour_text)
+    minute = int(minute_text)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
 
 
 def _parse_form_lines(lines: list[str]) -> dict[str, str]:

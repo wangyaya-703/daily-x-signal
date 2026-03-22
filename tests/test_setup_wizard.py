@@ -4,14 +4,20 @@ import unittest
 from unittest.mock import patch
 
 from daily_x_signal.setup_wizard import (
+    _default_output_choice_for_host_mode,
+    _current_host_mode,
+    _format_push_time,
+    _host_mode_patch,
     _infer_output_choice,
     _infer_style_choice,
     _is_existing_user_setup,
     _normalize_x_handle,
+    _parse_time_hhmm,
     _parse_form_lines,
     _parse_yes_no,
     _probe_proxy_url,
     _resolve_output_choice,
+    _scheduler_patch,
     _select_topics,
     _split_csv,
     _should_offer_access_retry,
@@ -77,8 +83,59 @@ class SetupWizardTests(unittest.TestCase):
         self.assertEqual(_infer_output_choice(True, True), "card_and_table")
         self.assertEqual(_infer_output_choice(True, False), "card_only")
         self.assertEqual(_infer_output_choice(False, False), "local_only")
+        self.assertEqual(
+            _default_output_choice_for_host_mode(
+                "openclaw",
+                feishu_default=False,
+                bitable_enabled=False,
+                feishu_ready=True,
+                bitable_ready=True,
+            ),
+            "card_and_table",
+        )
+        self.assertEqual(
+            _default_output_choice_for_host_mode(
+                "standalone",
+                feishu_default=False,
+                bitable_enabled=False,
+                feishu_ready=True,
+                bitable_ready=True,
+            ),
+            "local_only",
+        )
         self.assertEqual(_resolve_output_choice("keep", True, True, True), (True, True))
         self.assertEqual(_resolve_output_choice("card_and_table", True, False, False), (True, False))
+
+    def test_parse_and_format_push_time(self) -> None:
+        self.assertEqual(_parse_time_hhmm("08:30"), (8, 30))
+        self.assertIsNone(_parse_time_hhmm("830"))
+        self.assertEqual(_format_push_time({"scheduler": {"trigger_hour": 9, "trigger_minute": 5}}), "09:05")
+
+    def test_scheduler_patch_updates_trigger_and_deadline(self) -> None:
+        patch = _scheduler_patch("09:15", {"scheduler": {"enabled": True, "poll_interval_minutes": 15}})
+        self.assertEqual(patch["trigger_hour"], 9)
+        self.assertEqual(patch["trigger_minute"], 15)
+        self.assertEqual(patch["catchup_deadline_hour"], 12)
+        self.assertEqual(patch["catchup_deadline_minute"], 15)
+
+    def test_current_host_mode_and_patch_support_openclaw(self) -> None:
+        self.assertEqual(_current_host_mode({"runtime": {"host_mode": "openclaw"}}), "openclaw")
+        standalone_patch = _host_mode_patch(
+            "standalone",
+            {"github_fallback": {"enabled": True}, "openclaw": {}, "outputs": {"feishu": {"delivery_type": "webhook"}}},
+        )
+        self.assertTrue(standalone_patch["github_fallback"]["enabled"])
+        self.assertFalse(standalone_patch["openclaw"]["enabled"])
+        self.assertEqual(standalone_patch["feishu_delivery_type"], "webhook")
+
+        openclaw_patch = _host_mode_patch(
+            "openclaw",
+            {"github_fallback": {"enabled": True}, "openclaw": {"bot_receive_id_type": "chat_id"}},
+        )
+        self.assertFalse(openclaw_patch["github_fallback"]["enabled"])
+        self.assertTrue(openclaw_patch["openclaw"]["enabled"])
+        self.assertEqual(openclaw_patch["feishu_delivery_type"], "app")
+        self.assertEqual(openclaw_patch["feishu_receive_id_type"], "chat_id")
 
     def test_load_env_file_parses_export_lines(self) -> None:
         from pathlib import Path

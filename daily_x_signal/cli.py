@@ -629,6 +629,20 @@ def main() -> int:
         target_config = Path(args.override_config) if args.override_config else LOCAL_CONFIG_PATH
         def _post_write_generate(config_path: Path) -> int:
             merged_config = AppConfig.load(args.config).merged_with(str(config_path)).raw
+            preview_config = {
+                **merged_config,
+                "outputs": {
+                    **merged_config.get("outputs", {}),
+                    "feishu": {
+                        **merged_config.get("outputs", {}).get("feishu", {}),
+                        "enabled": False,
+                    },
+                    "feishu_bitable": {
+                        **merged_config.get("outputs", {}).get("feishu_bitable", {}),
+                        "enabled": False,
+                    },
+                },
+            }
             preview_args = argparse.Namespace(
                 command="generate",
                 config=args.config,
@@ -639,8 +653,8 @@ def main() -> int:
                 dry_run=False,
                 force=False,
             )
-            result = generate_digest(preview_args, merged_config, XReachClient(workdir=Path.cwd()))
-            return print_generate_result(result, merged_config)
+            result = generate_digest(preview_args, preview_config, XReachClient(workdir=Path.cwd()))
+            return print_generate_result(result, preview_config)
 
         return run_setup(
             base_config_path=Path(args.config),

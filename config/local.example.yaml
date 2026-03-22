@@ -1,3 +1,6 @@
+runtime:
+  host_mode: standalone   # standalone 或 openclaw
+
 x:
   viewer_handle: your_x_handle
   viewer_user_id: "your_x_user_id"
@@ -35,3 +38,12 @@ outputs:
     enabled: false
     app_token: your_bitable_app_token
     table_id: your_bitable_table_id
+
+openclaw:
+  enabled: false
+  use_linked_feishu_bot: true
+  use_heartbeat: true
+  bot_app_id_env: OPENCLAW_FEISHU_APP_ID
+  bot_app_secret_env: OPENCLAW_FEISHU_APP_SECRET
+  bot_receive_id_env: OPENCLAW_FEISHU_RECEIVE_ID
+  bot_receive_id_type: open_id
