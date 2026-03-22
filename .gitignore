@@ -1,12 +1,35 @@
+# Python environments and caches
 .venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.local.example
+config/local.yaml
+
+# macOS / editor noise
 .DS_Store
+.idea/
+.vscode/
+
+# Generated project outputs and runtime state
 output/
 state/*.json
 state/*.md
 state/*.lock
 state/logs/
-config/local.yaml
-.env.local
 !.gitkeep
+
+# One-off local maintenance scripts
+scripts/update_codex_feishu_mcp.py

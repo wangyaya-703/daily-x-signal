@@ -42,9 +42,9 @@ user-invocable: true
 在 OpenClaw 远端环境里，如果 shell 里预设了这类本地代理变量：
 
 ```bash
-http_proxy=http://127.0.0.1:7890
-https_proxy=http://127.0.0.1:7890
-all_proxy=socks5://127.0.0.1:7891
+http_proxy=http://127.0.0.1:8888
+https_proxy=http://127.0.0.1:8888
+all_proxy=socks5://127.0.0.1:8889
 ```
 
 先检查对应端口是否真的有进程在监听。若没有，不要继续带着这些变量执行 `brew`、`pip`、`xreach`、`setup` 或 `generate`，而是先清理：
@@ -104,7 +104,7 @@ daily-x-signal setup --override-config config/local.yaml
 引导重点：
 
 - 先确认 following 是否读全
-- 如果远端直连 X 失败，但有可用代理，优先把代理地址写入 `x.proxy_url`（例如 `http://127.0.0.1:7890`）
+- 如果远端直连 X 失败，但有可用代理，优先把代理地址写入 `x.proxy_url`（例如 `http://127.0.0.1:8888`）
 - 再确认兴趣主题、关键词、屏蔽词
 - 再确认飞书卡片和飞书多维表格
 

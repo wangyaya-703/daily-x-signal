@@ -173,3 +173,19 @@ outputs:
       summary: Summary
       published_at: Published At
       topics: Topics
+
+lab:
+  enabled: false
+  ssh_host: mac-mini
+  ssh_timeout_sec: 60
+  remote_base: "~/.openclaw/workspace/x-lab"
+  auto_run_setup: false
+  max_candidates_display: 10
+  min_actionable_score: 2
+  feishu_poll_timeout_sec: 1800
+  feishu_poll_interval_sec: 30
+  feishu_doc_token: null
+  feishu_report_doc_id: null       # 飞书调研报告文档 ID（x-lab-research 写入完整报告）
+  feishu_report_doc_id_env: X_LAB_FEISHU_DOC_ID
+  luna_receive_id: null
+  luna_receive_id_type: open_id

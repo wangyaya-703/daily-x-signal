@@ -32,18 +32,19 @@ from .store import load_json, save_json
 from .window import resolve_window
 from .x_client import XReachClient
 
-
-DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "config" / "default.yaml"
-LOCAL_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "local.yaml"
-STATE_PATH = Path(__file__).resolve().parents[1] / "state" / "history.json"
-FOLLOWING_CACHE_PATH = Path(__file__).resolve().parents[1] / "state" / "following_cache.json"
-CORE_POOL_PATH = Path(__file__).resolve().parents[1] / "state" / "core_authors.json"
-SCHEDULER_STATE_PATH = Path(__file__).resolve().parents[1] / "state" / "scheduler_state.json"
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONFIG = _PROJECT_ROOT / "config" / "default.yaml"
+LOCAL_CONFIG_PATH = _PROJECT_ROOT / "config" / "local.yaml"
+STATE_PATH = _PROJECT_ROOT / "state" / "history.json"
+FOLLOWING_CACHE_PATH = _PROJECT_ROOT / "state" / "following_cache.json"
+CORE_POOL_PATH = _PROJECT_ROOT / "state" / "core_authors.json"
+SCHEDULER_STATE_PATH = _PROJECT_ROOT / "state" / "scheduler_state.json"
+LAB_STATE_PATH = _PROJECT_ROOT / "state" / "lab_experiments.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="daily-x-signal")
-    parser.add_argument("command", choices=["generate", "sync-authors", "show-core-authors", "schedule-tick", "setup"])
+    parser.add_argument("command", choices=["generate", "sync-authors", "show-core-authors", "schedule-tick", "setup", "lab"])
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--override-config")
     parser.add_argument("--window-mode", choices=["scheduled", "rolling_24h"], default="scheduled")
@@ -342,7 +343,276 @@ def cmd_schedule_tick(args: argparse.Namespace, config: dict, client: XReachClie
         raise
 
 
+def build_lab_parser() -> argparse.ArgumentParser:
+    """解析 lab 子命令的参数。"""
+    parser = argparse.ArgumentParser(prog="daily-x-signal lab")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--scan", action="store_true", help="扫描最新日报 → 推飞书 → 等回复 → 部署")
+    group.add_argument("--list", action="store_true", help="列出历史实验")
+    group.add_argument("--rollback", metavar="EXP_ID", help="回滚指定实验")
+    group.add_argument("--init-repo", action="store_true", help="初始化远端 x-lab 仓库")
+    parser.add_argument("--brief", metavar="PATH", help="指定 brief JSON 文件路径")
+    parser.add_argument("--auto-run", action="store_true", help="部署后自动执行 setup.sh")
+    return parser
+
+
+def cmd_lab(config: dict, lab_args: argparse.Namespace) -> int:
+    """执行 lab 子命令。"""
+    import sys
+    from .lab.scanner import find_latest_brief, load_brief, scan_for_candidates
+    from .lab.state import load_lab_state, record_experiment, list_experiments_local
+    from .lab.deployer import (
+        SSHRunner, init_lab_repo, deploy_experiment, rollback_experiment,
+        list_experiments, _make_experiment_id,
+    )
+    from .lab.doc_writer import fetch_github_code_quality, update_experiments_md_remote, sync_to_feishu_doc
+    from .lab.feishu_selector import push_candidates_to_feishu, poll_user_reply, push_deploy_result, trigger_luna_research
+
+    lab_cfg = config.get("lab", {})
+    if not lab_cfg.get("enabled", False):
+        print("lab 功能未启用。请在 config/local.yaml 中设置 lab.enabled: true")
+        return 1
+
+    ssh_host = lab_cfg.get("ssh_host", "mac-mini")
+    remote_base = lab_cfg.get("remote_base", "~/工作/x-lab")
+    ssh_timeout = int(lab_cfg.get("ssh_timeout_sec", 60))
+    runner = SSHRunner(ssh_host, remote_base, ssh_timeout)
+
+    # --init-repo
+    if lab_args.init_repo:
+        print("测试 SSH 连接...")
+        if not runner.test_connection():
+            print(f"SSH 连接失败: {ssh_host}")
+            return 1
+        print(f"SSH 连接成功: {ssh_host}")
+        result = init_lab_repo(runner)
+        print(f"仓库状态: {result['status']} - {result['message']}")
+        return 0 if result["status"] != "error" else 1
+
+    # --list
+    if lab_args.list:
+        experiments = list_experiments_local(LAB_STATE_PATH)
+        if not experiments:
+            print("暂无实验记录")
+            return 0
+        print_section("实验历史")
+        print(
+            render_table(
+                ["实验ID", "状态", "作者", "分支", "部署时间"],
+                [
+                    [
+                        e.get("experiment_id", ""),
+                        e.get("status", ""),
+                        e.get("author_handle", ""),
+                        e.get("branch", ""),
+                        e.get("deployed_at", "")[:19],
+                    ]
+                    for e in experiments
+                ],
+            )
+        )
+        return 0
+
+    # --rollback
+    if lab_args.rollback:
+        print("测试 SSH 连接...")
+        if not runner.test_connection():
+            print(f"SSH 连接失败: {ssh_host}")
+            return 1
+        result = rollback_experiment(runner, lab_args.rollback)
+        print(f"回滚结果: {result['status']} - {result.get('message', '')}")
+        return 0 if result["status"] != "error" else 1
+
+    # --scan
+    if lab_args.scan:
+        # 1. 加载 brief
+        output_dir = Path(config.get("outputs", {}).get("local", {}).get("directory", "output"))
+        if not output_dir.is_absolute():
+            output_dir = _PROJECT_ROOT / output_dir
+        if lab_args.brief:
+            brief_path = Path(lab_args.brief)
+        else:
+            brief_path = find_latest_brief(output_dir)
+
+        if not brief_path or not brief_path.exists():
+            print("未找到日报 brief 文件。请先运行 generate 或用 --brief 指定路径")
+            return 1
+
+        print(f"加载日报: {brief_path.name}")
+        brief = load_brief(brief_path)
+
+        # 2. 扫描候选
+        min_score = int(lab_cfg.get("min_actionable_score", 2))
+        candidates = scan_for_candidates(brief)
+        max_display = int(lab_cfg.get("max_candidates_display", 10))
+        candidates = candidates[:max_display]
+
+        if not candidates:
+            print("本期日报未发现实操候选帖子")
+            return 0
+
+        print(f"\n找到 {len(candidates)} 个实操候选:")
+        for idx, c in enumerate(candidates, 1):
+            post = c["post"]
+            handle = post.get("author", {}).get("handle", "?")
+            priority = post.get("priority_label", "?")
+            print(f"  {idx}. [{priority}级] @{handle} (实操分:{c['actionable_score']}) - {c['reason'][:60]}")
+
+        # 3. 推送到飞书
+        feishu_enabled = config.get("outputs", {}).get("feishu", {}).get("enabled", False)
+        if not feishu_enabled:
+            print("\n飞书未启用，进入本地交互模式")
+            user_input = input("请输入选择（如 1,3 或 全部 或 跳过）: ").strip()
+            if not user_input or user_input in ("跳过", "skip"):
+                print("已跳过")
+                return 0
+
+            from .lab.feishu_selector import _parse_reply
+            parsed = _parse_reply(user_input, len(candidates))
+            selected_indices = parsed["selected"]
+            github_urls = parsed.get("github_urls", {})
+        else:
+            print("\n推送候选到飞书...")
+            try:
+                msg_id = push_candidates_to_feishu(candidates, config)
+                print(f"已推送 (message_id: {msg_id})")
+            except Exception as e:
+                print(f"飞书推送失败: {e}")
+                return 1
+
+            # 4. 轮询回复
+            poll_timeout = int(lab_cfg.get("feishu_poll_timeout_sec", 1800))
+            poll_interval = int(lab_cfg.get("feishu_poll_interval_sec", 30))
+            print(f"等待飞书回复（超时 {poll_timeout // 60} 分钟）...")
+            reply = poll_user_reply(
+                config,
+                sent_after=datetime.now(),
+                timeout_sec=poll_timeout,
+                poll_interval=poll_interval,
+                candidate_count=len(candidates),
+            )
+            if reply.get("timeout"):
+                print("等待超时，自动跳过")
+                return 0
+            selected_indices = reply.get("selected", [])
+            github_urls = reply.get("github_urls", {})
+            print(f"用户选择: {reply.get('raw', '')}")
+
+        if not selected_indices:
+            print("未选择任何实验")
+            return 0
+
+        # 5. SSH 连接测试
+        print("\n测试 SSH 连接...")
+        if not runner.test_connection():
+            print(f"SSH 连接失败: {ssh_host}")
+            return 1
+        print(f"SSH 连接成功: {ssh_host}")
+
+        # 确保仓库已初始化
+        init_result = init_lab_repo(runner)
+        if init_result["status"] == "error":
+            print(f"仓库初始化失败: {init_result['message']}")
+            return 1
+
+        # 6. 部署选中的实验
+        auto_run = lab_args.auto_run or lab_cfg.get("auto_run_setup", False)
+        for idx in selected_indices:
+            candidate = candidates[idx]
+            post = candidate["post"]
+            exp_id = _make_experiment_id(post)
+            github_url = github_urls.get(str(idx))
+
+            print(f"\n部署实验: {exp_id}")
+
+            # 获取 GitHub 代码质量
+            code_quality = {}
+            if github_url:
+                print(f"  获取 GitHub 信息: {github_url}")
+                code_quality = fetch_github_code_quality(github_url)
+
+            result = deploy_experiment(
+                runner, exp_id, candidate,
+                github_url=github_url,
+                auto_run=auto_run,
+            )
+            print(f"  状态: {result['status']}")
+
+            if result["status"] == "deployed":
+                # 记录到本地状态
+                record_experiment(
+                    LAB_STATE_PATH,
+                    experiment_id=exp_id,
+                    branch=result["branch"],
+                    post_url=result["post_url"],
+                    github_url=github_url,
+                    author_handle=result["author_handle"],
+                    status="deployed",
+                    brief_date=brief.get("generated_at", "")[:10],
+                )
+
+                # 更新 EXPERIMENTS.md（远端）
+                doc_exp = {
+                    "experiment_id": exp_id,
+                    "brief_date": brief.get("generated_at", "")[:10],
+                    "post_url": result["post_url"],
+                    "author_handle": result["author_handle"],
+                    "github_url": github_url,
+                    "install_success": result.get("install_success"),
+                    "code_quality": code_quality,
+                    "summary_bullets": post.get("summary_bullets", []),
+                }
+
+                # 切到实验分支更新文档
+                md_result = update_experiments_md_remote(runner, doc_exp)
+                if md_result["status"] == "ok":
+                    print(f"  EXPERIMENTS.md 已更新")
+
+                # 飞书文档同步
+                doc_token = lab_cfg.get("feishu_doc_token")
+                if doc_token:
+                    doc_result = sync_to_feishu_doc(doc_exp, config)
+                    print(f"  飞书文档: {doc_result['status']}")
+
+                # 推送部署结果到飞书
+                if feishu_enabled:
+                    try:
+                        push_deploy_result(result, config)
+                    except Exception:
+                        pass
+
+                # 触发 Luna 自动调研（如果配置了 luna_receive_id）
+                if github_url and lab_cfg.get("luna_receive_id"):
+                    luna_result = trigger_luna_research(
+                        experiment_id=exp_id,
+                        github_url=github_url,
+                        post_url=result["post_url"],
+                        author_handle=result["author_handle"],
+                        feishu_config=config,
+                        luna_receive_id=lab_cfg.get("luna_receive_id"),
+                    )
+                    print(f"  Luna 调研: {luna_result['status']} - {luna_result.get('message', '')}")
+            else:
+                print(f"  错误: {result.get('message', '')}")
+
+        print("\n部署完成")
+        return 0
+
+    return 0
+
+
 def main() -> int:
+    import sys
+
+    # lab 命令需要提前拦截，因为它有自己的参数解析器
+    if len(sys.argv) >= 2 and sys.argv[1] == "lab":
+        # 只解析 --config 和 --override-config（lab 之前的通用参数）
+        base_config = AppConfig.load(str(DEFAULT_CONFIG))
+        config = base_config.merged_with(str(LOCAL_CONFIG_PATH) if LOCAL_CONFIG_PATH.exists() else None).raw
+        lab_parser = build_lab_parser()
+        lab_args = lab_parser.parse_args(sys.argv[2:])
+        return cmd_lab(config, lab_args)
+
     parser = build_parser()
     args = parser.parse_args()
     if args.command == "setup":
