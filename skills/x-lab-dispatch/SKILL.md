@@ -2,7 +2,7 @@
 name: x-lab-dispatch
 description: 日报候选派发——扫描最新日报，评分筛选实操帖子，去重，自动搜索 GitHub URL，逐个发飞书消息触发 x-lab-research 调研。触发词：今天有什么值得试的、扫描日报、dispatch、派发调研、日报里有什么、帮我看看日报。
 metadata:
-  trigger-hint: 当消息涉及"扫描日报"、"dispatch"、"派发"、"今天有什么值得试的"、"有没有新的实操帖子"、"日报里有什么好东西"、"帮我看看日报"、"有什么值得调研的"、"筛选候选"、"今天有什么可以试的项目"时触发。也在 用户 提到"日报"+"调研/试/看/扫描"组合时触发。HEARTBEAT 每天 10:00 自动触发。
+  trigger-hint: 当消息涉及"扫描日报"、"dispatch"、"派发"、"今天有什么值得试的"、"有没有新的实操帖子"、"日报里有什么好东西"、"帮我看看日报"、"有什么值得调研的"、"筛选候选"、"今天有什么可以试的项目"时触发。也在用户提到"日报"+"调研/试/看/扫描"组合时触发。HEARTBEAT 每天 10:00 自动触发。
   openclaw:
     emoji: "📋"
 user-invocable: true
@@ -21,7 +21,7 @@ user-invocable: true
 ## 触发方式
 
 1. **HEARTBEAT**：每天 10:00 自动触发（日报在 8:30 生成）
-2. **手动**：用户 说"今天有什么值得试的"、"扫描日报"、"dispatch"、"日报里有什么好东西"、"帮我看看日报"、"有什么值得调研的"、"今天有什么可以试的项目"
+2. **手动**：用户说"今天有什么值得试的"、"扫描日报"、"dispatch"、"日报里有什么好东西"、"帮我看看日报"、"有什么值得调研的"、"今天有什么可以试的项目"
 3. **组合触发**：消息同时包含"日报"和以下任一词："调研"、"试"、"看看"、"扫描"、"筛选"
 
 ---
@@ -86,7 +86,7 @@ cat "$EXPERIMENTS" 2>/dev/null || echo "无历史记录"
 3. **短链展开**：对 `text` 中的 t.co 链接，用 `web_fetch` 跟随重定向获取最终 URL
 4. **找不到**：标注"未找到 GitHub URL"，仍然派发（research 会基于帖子内容评价）
 
-**不要问 用户 要 GitHub URL。**
+**不要问用户要 GitHub URL。**
 
 ---
 
@@ -127,7 +127,7 @@ QUEUE=~/.openclaw/workspace/x-lab/queue.json
 
 ### 逐个发送飞书调研指令
 
-对每个候选，通过飞书 API 发消息给 Luna 自己（使用 `lab.luna_receive_id` 配置）。
+对每个候选，通过飞书 API 发消息给 OpenClaw 自身（使用 `lab.luna_receive_id` 配置的 receive_id）。
 
 **消息格式**（固定，x-lab-research 的 trigger-hint 会匹配"调研" + GitHub URL）：
 
@@ -203,7 +203,7 @@ curl -s -X POST "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/in
 - **queue.json 已存在（今天已派发过）** → 回复"今天已派发过调研任务，如需重新派发请先删除 queue.json"，退出
 - **飞书消息发送失败** → 标记 dispatch_failed，继续下一个
 - **所有候选都被去重过滤** → 回复说明，退出
-- **绝不中途问 用户**
+- **绝不中途问用户**
 
 ---
 
@@ -222,13 +222,11 @@ curl -s -X POST "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/in
 - `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 环境变量
 - 或从 `.env.local` 文件加载
 
-Luna 的 receive_id 从 OpenClaw 的配置或环境变量中获取。
+OpenClaw 的 receive_id 从配置项 `lab.luna_receive_id` 或环境变量中获取。
 
 ---
 
-## HEARTBEAT
-
-## 每日候选派发
+## HEARTBEAT — 每日候选派发
 
 **触发时间**：每天 10:00（Asia/Shanghai）
 
