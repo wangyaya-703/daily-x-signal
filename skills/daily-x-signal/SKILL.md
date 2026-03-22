@@ -1,6 +1,6 @@
 ---
 name: daily-x-signal
-version: "2026.03.22.2"
+version: "2026.03.22.3"
 description: 从关注的 X 账号中生成高信号中文日报，并优先通过 CLI setup 完成引导式配置，再生成过去 24 小时或调度窗口内的日报。用户提到 X/Twitter 日报、过去 24 小时动态、重点帖子排序、今日必读、飞书卡片、帖子追踪表、首次配置日报机器人时，都应使用这个 skill，尤其是在 OpenClaw 远端环境中。
 metadata:
   trigger-hint: 当用户想配置或生成 X 日报、检查 daily-x-signal 是否可运行、补齐飞书和 xreach 环境、查看过去 24 小时值得看的帖子时使用。
@@ -119,7 +119,7 @@ daily-x-signal setup --override-config config/local.yaml
 
 1. 整体上尽量控制在两轮内完成：
    - 第一轮：默认只收集 handle；只有 following 同步失败时，才补一张 user id / proxy 的高级访问表单
-   - 第二轮：following 同步后的一次性总表单，统一收兴趣方向、关键词、屏蔽词、运行偏好、输出设置
+   - 第二轮：老用户只确认推荐兴趣方向；新用户才补少量选择项
 2. 如果检测到已有 X 账号配置，只说“检测到已有 X 账号配置，是否沿用”，不要回显原值。
 3. 如果需要用户填写账号，明确解释：
    - `X handle` 就是 `x.com/<handle>` 里的那段，例如 `https://x.com/sama` 对应 `sama`
@@ -129,27 +129,23 @@ daily-x-signal setup --override-config config/local.yaml
    - 当前推断出的 2 到 4 个关注方向
    - 每个方向为什么被推荐
    - 默认会直接写入的关键词
-5. 然后一次性向用户索要这张总表单，而不是拆成多轮：
+5. 如果是老用户，优先走“快速更新”：
+   - 沿用已有 handle、登录态、following 确认、输出配置和运行偏好
+   - 只让用户确认推荐的兴趣方向
+   - 如有需要，再补少量关键词
+6. 如果是新用户，再用少量选择项收完配置，不要给长表单：
 
 ```text
-expected_following_count=820
-following_count_confirmed=yes
 topics=1,2,4
 extra_keywords=paper, benchmark, product launch
-remove_keywords=
-disliked_keywords=
-default_mode=all_following
-digest_top_n=10
-include_replies=yes
-reply_like_threshold=100
-enable_feishu=yes
-enable_bitable=yes
+style=balanced
+output=card_and_table
 ```
 
 如果用户没有额外修改项，允许直接回复“用默认推荐”。
 
 不要说“看看 setup 下一步是否允许补关键词”这类不确定表述；当前流程支持直接补充关键词，并会直接写入配置。
-像 `digest_top_n`、`include_replies`、`enable_bitable` 这类运行偏好，也应该放在这张总表单里一起收，不要单独追问。
+像 `digest_top_n`、`include_replies`、`enable_bitable` 这类运行偏好，不要逐项追问。新用户用 `style` 和 `output` 两个选择覆盖即可；老用户默认沿用旧设置。
 用户确认写入配置后，应该直接自动执行一次 `daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml`，让用户马上确认第一版日报是否符合预期。
 
 ## Skill 更新提示

@@ -4,10 +4,14 @@ import unittest
 from unittest.mock import patch
 
 from daily_x_signal.setup_wizard import (
+    _infer_output_choice,
+    _infer_style_choice,
+    _is_existing_user_setup,
     _normalize_x_handle,
     _parse_form_lines,
     _parse_yes_no,
     _probe_proxy_url,
+    _resolve_output_choice,
     _select_topics,
     _split_csv,
     _should_offer_access_retry,
@@ -58,6 +62,23 @@ class SetupWizardTests(unittest.TestCase):
         self.assertTrue(_should_offer_access_retry({"reason": "当前未同步到任何 following，建议检查 viewer 配置或 X 登录态。"}, "", ""))
         self.assertFalse(_should_offer_access_retry({"reason": "following 列表已达到当前配置下的完整性要求。"}, "", ""))
         self.assertFalse(_should_offer_access_retry({"reason": "following 同步失败，已回退本地缓存：timeout"}, "123", "http://127.0.0.1:7890"))
+
+    def test_is_existing_user_setup_requires_handle_and_following_confirmation(self) -> None:
+        self.assertTrue(_is_existing_user_setup({"x": {"viewer_handle": "demo", "following_count_confirmed": True}}))
+        self.assertFalse(_is_existing_user_setup({"x": {"viewer_handle": "demo", "following_count_confirmed": False}}))
+        self.assertFalse(_is_existing_user_setup({"x": {"viewer_handle": "", "following_count_confirmed": True}}))
+
+    def test_infer_style_choice_prefers_expected_presets(self) -> None:
+        self.assertEqual(_infer_style_choice("core_authors", 6, False, 150), "focused")
+        self.assertEqual(_infer_style_choice("all_following", 12, True, 60), "broad")
+        self.assertEqual(_infer_style_choice("all_following", 10, True, 100), "balanced")
+
+    def test_infer_and_resolve_output_choice(self) -> None:
+        self.assertEqual(_infer_output_choice(True, True), "card_and_table")
+        self.assertEqual(_infer_output_choice(True, False), "card_only")
+        self.assertEqual(_infer_output_choice(False, False), "local_only")
+        self.assertEqual(_resolve_output_choice("keep", True, True, True), (True, True))
+        self.assertEqual(_resolve_output_choice("card_and_table", True, False, False), (True, False))
 
     def test_load_env_file_parses_export_lines(self) -> None:
         from pathlib import Path

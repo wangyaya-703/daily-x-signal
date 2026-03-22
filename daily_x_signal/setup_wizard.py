@@ -18,6 +18,34 @@ from .personalization import build_interest_profile, topic_descriptions, topic_l
 from .x_client import XReachClient
 
 
+STYLE_PRESETS: dict[str, dict[str, Any]] = {
+    "focused": {
+        "label": "精读优先",
+        "description": "更少条目，只看强信号，不纳入回复帖。",
+        "default_mode": "core_authors",
+        "digest_top_n": 6,
+        "include_replies": False,
+        "reply_like_threshold": 150,
+    },
+    "balanced": {
+        "label": "均衡推荐",
+        "description": "默认推荐，兼顾主线、方法论和高质量回复。",
+        "default_mode": "all_following",
+        "digest_top_n": 10,
+        "include_replies": True,
+        "reply_like_threshold": 100,
+    },
+    "broad": {
+        "label": "尽量别漏",
+        "description": "覆盖更广，回复帖门槛更低，适合扫面式阅读。",
+        "default_mode": "all_following",
+        "digest_top_n": 12,
+        "include_replies": True,
+        "reply_like_threshold": 60,
+    },
+}
+
+
 def run_setup(
     base_config_path: Path,
     target_config_path: Path,
@@ -43,7 +71,8 @@ def run_setup(
         or os.getenv("XREACH_PROXY")
         or ""
     )
-    viewer_handle, viewer_user_id, proxy_url = _collect_access_form(existing_handle, existing_user_id, proxy_default)
+    existing_user_setup = _is_existing_user_setup(config)
+    viewer_handle, viewer_user_id, proxy_url = _collect_access_form(existing_handle, existing_user_id, proxy_default, existing_user_setup)
     if viewer_handle:
         config.setdefault("x", {})["viewer_handle"] = viewer_handle
     if viewer_user_id:
@@ -141,100 +170,18 @@ def run_setup(
             ],
         )
     )
-    default_topic_selection = ",".join(str(idx) for idx in range(1, min(3, len(topic_choices)) + 1))
-    current_mode = str(config.get("profile", {}).get("default_mode", "all_following"))
-    current_top_n = str(config.get("profile", {}).get("digest_top_n", 10))
-    current_include_replies = bool(config.get("x", {}).get("include_replies", True))
-    current_reply_threshold = str(config.get("x", {}).get("reply_like_threshold", 100))
-    feishu_default = bool(config.get("outputs", {}).get("feishu", {}).get("enabled", False))
-    bitable_cfg = config.get("outputs", {}).get("feishu_bitable", {})
-    bitable_ready = bool(bitable_cfg.get("app_token")) and bool(bitable_cfg.get("table_id"))
-    seed_topics = _select_topics(topic_choices, default_topic_selection)
-    default_keyword_write = _dedupe([*interest_profile.get("keywords", [])[:8], *topic_seed_keywords(seed_topics)[:8]])[:12]
-    expected_default = following_status.get("expected_following_count") or following_status.get("synced_count") or ""
-    confirmed_default = bool(config.get("x", {}).get("following_count_confirmed", False))
-
-    print_section("偏好与运行表单")
-    print(
-        render_table(
-            ["Field", "Default", "How to fill"],
-            [
-                ["expected_following_count", str(expected_default), "确认你的关注总数；如果当前同步数看起来正确，就直接用默认值。"],
-                ["following_count_confirmed", "yes" if confirmed_default else "no", "yes/no，确认上面的 following 总数。"],
-                ["topics", default_topic_selection, "关注方向编号，逗号分隔；默认取上面的前三项。"],
-                ["extra_keywords", "", "额外新增的关键词，逗号分隔。"],
-                ["remove_keywords", "", "从默认写入关键词里删掉不想保留的词，逗号分隔。"],
-                ["disliked_keywords", ",".join(config.get("profile", {}).get("disliked_keywords", [])), "明确不想看的词，逗号分隔。"],
-                ["default_mode", current_mode, "all_following 或 core_authors。"],
-                ["digest_top_n", current_top_n, "飞书卡片默认展示多少条。"],
-                ["include_replies", "yes" if current_include_replies else "no", "yes/no，是否纳入高质量回复。"],
-                ["reply_like_threshold", current_reply_threshold, "回复进入候选池的最低点赞数。"],
-                ["enable_feishu", "yes" if feishu_default else "no", "yes/no，是否发送飞书卡片。"],
-                ["enable_bitable", "yes" if (bool(bitable_cfg.get("enabled", False)) if bitable_ready else False) else "no", "yes/no，是否写入帖子追踪表。"],
-            ],
-        )
-    )
-    print(
-        render_table(
-            ["Default Keyword Write", "Value"],
-            [["interest_keywords", ", ".join(default_keyword_write) or "暂无建议"]],
-        )
-    )
-    print(
-        render_table(
-            ["Output", "Current", "Ready", "Detail"],
-            [
-                ["Feishu Card", bool_text(feishu_default), bool_text(_check_ok(checks, "feishu_app")), "飞书卡片推送"],
-                ["Feishu Bitable", bool_text(bool(bitable_cfg.get("enabled", False))), bool_text(bitable_ready), "帖子追踪表（1 帖 1 行）"],
-                ["Local Files", "Yes", "Yes", "Markdown + JSON"],
-            ],
-        )
-    )
-    if bitable_ready:
-        print(
-            render_table(
-                ["Bitable", "Value"],
-                [
-                    ["App Token", bitable_cfg.get("app_token", "")],
-                    ["Table ID", bitable_cfg.get("table_id", "")],
-                    ["Open URL", bitable_app_url(config) or ""],
-                    ["Write Model", "按 Post ID upsert，1 个帖子 1 行"],
-                    ["Tracked Fields", "Priority / Priority Score / Original URL / Summary / Published At / Topics"],
-                ],
-            )
-        )
-    form_defaults = {
-        "expected_following_count": str(expected_default),
-        "following_count_confirmed": "yes" if confirmed_default else "no",
-        "topics": default_topic_selection,
-        "extra_keywords": "",
-        "remove_keywords": "",
-        "disliked_keywords": ",".join(config.get("profile", {}).get("disliked_keywords", [])),
-        "default_mode": current_mode,
-        "digest_top_n": current_top_n,
-        "include_replies": "yes" if current_include_replies else "no",
-        "reply_like_threshold": current_reply_threshold if current_include_replies else "100",
-        "enable_feishu": "yes" if feishu_default else "no",
-        "enable_bitable": "yes" if (bool(bitable_cfg.get("enabled", False)) if bitable_ready else False) else "no",
-    }
-    form_values = _ask_form(
-        "请一次性填写上面这张表单。格式是 key=value，每行一个字段；直接回车则全部使用默认值。",
-        form_defaults,
-    )
-    selected_topics = _select_topics(topic_choices, form_values["topics"])
-    recommended_keywords = _dedupe([*interest_profile.get("keywords", [])[:8], *topic_seed_keywords(selected_topics)[:8]])[:12]
-    removed_keywords = set(_split_csv(form_values["remove_keywords"]))
-    extra_keywords = _split_csv(form_values["extra_keywords"])
-    disliked_keywords = _split_csv(form_values["disliked_keywords"])
-    final_keywords = _dedupe([keyword for keyword in recommended_keywords if keyword not in removed_keywords] + extra_keywords)
-    expected_following_count = form_values["expected_following_count"]
-    following_confirmed = _parse_yes_no(form_values["following_count_confirmed"], confirmed_default)
-    default_mode = form_values["default_mode"] if form_values["default_mode"] in {"all_following", "core_authors"} else current_mode
-    digest_top_n = form_values["digest_top_n"]
-    include_replies = _parse_yes_no(form_values["include_replies"], current_include_replies)
-    reply_like_threshold = form_values["reply_like_threshold"] if include_replies else "100"
-    enable_feishu = _parse_yes_no(form_values["enable_feishu"], feishu_default)
-    enable_bitable = _parse_yes_no(form_values["enable_bitable"], bool(bitable_cfg.get("enabled", False)) if bitable_ready else False)
+    setup_choices = _collect_preference_choices(config, checks, following_status, topic_choices, interest_profile, existing_user_setup)
+    selected_topics = setup_choices["selected_topics"]
+    final_keywords = setup_choices["final_keywords"]
+    disliked_keywords = setup_choices["disliked_keywords"]
+    expected_following_count = setup_choices["expected_following_count"]
+    following_confirmed = setup_choices["following_confirmed"]
+    default_mode = setup_choices["default_mode"]
+    digest_top_n = setup_choices["digest_top_n"]
+    include_replies = setup_choices["include_replies"]
+    reply_like_threshold = setup_choices["reply_like_threshold"]
+    enable_feishu = setup_choices["enable_feishu"]
+    enable_bitable = setup_choices["enable_bitable"]
 
     patch = {
         "profile": {
@@ -545,8 +492,11 @@ def _ask_form(prompt: str, defaults: dict[str, str]) -> dict[str, str]:
     return values
 
 
-def _collect_access_form(existing_handle: str, existing_user_id: str, existing_proxy_url: str) -> tuple[str, str, str]:
+def _collect_access_form(existing_handle: str, existing_user_id: str, existing_proxy_url: str, reuse_existing: bool) -> tuple[str, str, str]:
     print_section("访问配置")
+    if reuse_existing and existing_handle:
+        print(render_table(["Field", "Status"], [["已有配置", "检测到旧版配置，默认沿用当前 X 访问配置"], ["viewer_handle", _mask_value(existing_handle)]]))
+        return existing_handle, existing_user_id, existing_proxy_url
     if existing_handle or existing_user_id or existing_proxy_url:
         print(
             render_table(
@@ -626,11 +576,165 @@ def _mask_value(value: str) -> str:
     return f"{value[:2]}***{value[-2:]}"
 
 
+def _is_existing_user_setup(config: dict[str, Any]) -> bool:
+    x_cfg = config.get("x", {})
+    return bool(str(x_cfg.get("viewer_handle") or "").strip()) and bool(x_cfg.get("following_count_confirmed", False))
+
+
 def _should_offer_access_retry(following_status: dict[str, Any], viewer_user_id: str, proxy_url: str) -> bool:
     reason = str(following_status.get("reason", ""))
     if viewer_user_id and proxy_url:
         return False
     return "following 同步失败" in reason or "未同步到任何 following" in reason
+
+
+def _collect_preference_choices(
+    config: dict[str, Any],
+    checks: list[dict[str, Any]],
+    following_status: dict[str, Any],
+    topic_choices: list[tuple[str, str, float, str, str]],
+    interest_profile: dict[str, Any],
+    existing_user_setup: bool,
+) -> dict[str, Any]:
+    current_mode = str(config.get("profile", {}).get("default_mode", "all_following"))
+    current_top_n = int(config.get("profile", {}).get("digest_top_n", 10))
+    current_include_replies = bool(config.get("x", {}).get("include_replies", True))
+    current_reply_threshold = int(config.get("x", {}).get("reply_like_threshold", 100))
+    feishu_default = bool(config.get("outputs", {}).get("feishu", {}).get("enabled", False))
+    bitable_cfg = config.get("outputs", {}).get("feishu_bitable", {})
+    bitable_ready = bool(bitable_cfg.get("app_token")) and bool(bitable_cfg.get("table_id"))
+    existing_bitable_enabled = bool(bitable_cfg.get("enabled", False)) if bitable_ready else False
+    default_topic_selection = ",".join(str(idx) for idx in range(1, min(3, len(topic_choices)) + 1))
+    expected_default = str(following_status.get("expected_following_count") or following_status.get("synced_count") or "")
+    confirmed_default = bool(config.get("x", {}).get("following_count_confirmed", False))
+    existing_keywords = [str(item).strip() for item in config.get("profile", {}).get("interest_keywords", []) if str(item).strip()]
+    existing_disliked_keywords = [str(item).strip() for item in config.get("profile", {}).get("disliked_keywords", []) if str(item).strip()]
+    recommended_keyword_write = _build_recommended_keywords(interest_profile, _select_topics(topic_choices, default_topic_selection), existing_keywords)
+
+    print_section("输出状态")
+    print(
+        render_table(
+            ["Output", "Current", "Ready"],
+            [
+                ["Feishu Card", bool_text(feishu_default), bool_text(_check_ok(checks, "feishu_app"))],
+                ["Feishu Bitable", bool_text(existing_bitable_enabled), bool_text(bitable_ready)],
+                ["Local Files", "Yes", "Yes"],
+            ],
+        )
+    )
+
+    if existing_user_setup:
+        print_section("老用户快速更新")
+        print(
+            render_table(
+                ["Field", "Default", "How to fill"],
+                [
+                    ["topics", default_topic_selection, "只需要确认推荐方向编号；留空采用推荐组合。"],
+                    ["extra_keywords", "", "如果你想额外追踪论文、bench、产品名，再补少量关键词。"],
+                ],
+            )
+        )
+        print(render_table(["Default Keyword Write"], [[", ".join(recommended_keyword_write) or "暂无建议"]]))
+        topic_selection = _ask("选择关注方向编号（留空采用推荐组合）", default_topic_selection)
+        extra_keywords = _split_csv(_ask("补充少量关键词（可留空）", ""))
+        selected_topics = _select_topics(topic_choices, topic_selection)
+        final_keywords = _dedupe([*_build_recommended_keywords(interest_profile, selected_topics, existing_keywords), *extra_keywords])
+        return {
+            "selected_topics": selected_topics,
+            "final_keywords": final_keywords,
+            "disliked_keywords": existing_disliked_keywords,
+            "expected_following_count": expected_default,
+            "following_confirmed": confirmed_default,
+            "default_mode": current_mode,
+            "digest_top_n": current_top_n,
+            "include_replies": current_include_replies,
+            "reply_like_threshold": current_reply_threshold,
+            "enable_feishu": feishu_default,
+            "enable_bitable": existing_bitable_enabled,
+        }
+
+    style_choice = _infer_style_choice(current_mode, current_top_n, current_include_replies, current_reply_threshold)
+    output_choice = _infer_output_choice(feishu_default, existing_bitable_enabled)
+    need_following_confirm = bool(following_status.get("needs_confirmation", False)) or not confirmed_default
+
+    print_section("快速选择")
+    print(
+        render_table(
+            ["Preset", "Style", "Meaning"],
+            [[key, value["label"], value["description"]] for key, value in STYLE_PRESETS.items()],
+        )
+    )
+    print(
+        render_table(
+            ["Output Choice", "Meaning"],
+            [
+                ["keep", "沿用当前输出设置"],
+                ["local_only", "只保留本地 Markdown + JSON"],
+                ["card_only", "发送飞书卡片，不写帖子追踪表"],
+                ["card_and_table", "发送飞书卡片，并写入帖子追踪表"],
+            ],
+        )
+    )
+    if need_following_confirm:
+        print(render_table(["Following"], [[f"当前同步到 {following_status.get('synced_count', 0)} 个关注对象；如果看起来合理，就确认这个总数。"]]))
+        expected_following_count = _ask("确认关注总数", expected_default)
+        following_confirmed = _ask_yes_no("是否确认这个关注总数", confirmed_default or bool(expected_following_count))
+    else:
+        expected_following_count = expected_default
+        following_confirmed = confirmed_default
+    selected_topics = _select_topics(topic_choices, _ask("选择关注方向编号（留空采用推荐组合）", default_topic_selection))
+    extra_keywords = _split_csv(_ask("补充少量关键词（可留空）", ""))
+    style_choice = _ask_choice("选择阅读风格", list(STYLE_PRESETS.keys()), style_choice)
+    output_choice = _ask_choice("选择输出方式", ["keep", "local_only", "card_only", "card_and_table"], output_choice)
+
+    style = STYLE_PRESETS[style_choice]
+    final_keywords = _dedupe([*_build_recommended_keywords(interest_profile, selected_topics, existing_keywords), *extra_keywords])
+    enable_feishu, enable_bitable = _resolve_output_choice(output_choice, feishu_default, existing_bitable_enabled, bitable_ready)
+    return {
+        "selected_topics": selected_topics,
+        "final_keywords": final_keywords,
+        "disliked_keywords": existing_disliked_keywords,
+        "expected_following_count": expected_following_count,
+        "following_confirmed": following_confirmed,
+        "default_mode": style["default_mode"],
+        "digest_top_n": int(style["digest_top_n"]),
+        "include_replies": bool(style["include_replies"]),
+        "reply_like_threshold": int(style["reply_like_threshold"]),
+        "enable_feishu": enable_feishu,
+        "enable_bitable": enable_bitable,
+    }
+
+
+def _build_recommended_keywords(interest_profile: dict[str, Any], selected_topics: list[str], existing_keywords: list[str]) -> list[str]:
+    return _dedupe([*interest_profile.get("keywords", [])[:8], *topic_seed_keywords(selected_topics)[:8], *existing_keywords])[:12]
+
+
+def _infer_style_choice(current_mode: str, current_top_n: int, current_include_replies: bool, current_reply_threshold: int) -> str:
+    if current_mode == "core_authors" and not current_include_replies and current_top_n <= 6:
+        return "focused"
+    if current_top_n >= 12 or current_reply_threshold <= 60:
+        return "broad"
+    return "balanced"
+
+
+def _infer_output_choice(feishu_enabled: bool, bitable_enabled: bool) -> str:
+    if feishu_enabled and bitable_enabled:
+        return "card_and_table"
+    if feishu_enabled:
+        return "card_only"
+    return "local_only"
+
+
+def _resolve_output_choice(choice: str, feishu_default: bool, bitable_default: bool, bitable_ready: bool) -> tuple[bool, bool]:
+    if choice == "keep":
+        return feishu_default, bitable_default if bitable_ready else False
+    if choice == "local_only":
+        return False, False
+    if choice == "card_only":
+        return True, False
+    if choice == "card_and_table":
+        return True, bitable_ready
+    return feishu_default, bitable_default if bitable_ready else False
 
 
 def _parse_form_lines(lines: list[str]) -> dict[str, str]:
