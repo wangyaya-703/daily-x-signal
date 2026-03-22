@@ -60,6 +60,16 @@ class DailyXSignalSkillTests(unittest.TestCase):
         text = SKILL_PATH.read_text(encoding="utf-8")
         self.assertIn("if [ -f .env.local ]; then set -a; source .env.local; set +a; fi", text)
 
+    def test_skill_requires_batch_form_and_no_identity_echo(self) -> None:
+        text = SKILL_PATH.read_text(encoding="utf-8")
+        self.assertIn("不要直接回显已有的 `viewer_handle` 或 `viewer_user_id` 原值", text)
+        self.assertIn("然后一次性向用户索要这张总表单", text)
+        self.assertIn("topics=1,2,4", text)
+        self.assertIn("不要说“看看 setup 下一步是否允许补关键词”", text)
+        self.assertIn("默认只收集 handle", text)
+        self.assertIn("只有 following 同步失败时", text)
+        self.assertIn("自动执行一次 `daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml`", text)
+
 
 if __name__ == "__main__":
     unittest.main()

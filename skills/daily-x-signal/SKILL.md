@@ -104,11 +104,52 @@ daily-x-signal setup --override-config config/local.yaml
 引导重点：
 
 - 先确认 following 是否读全
-- 如果远端直连 X 失败，但有可用代理，优先把代理地址写入 `x.proxy_url`（例如 `http://127.0.0.1:8888`）
-- 再确认兴趣主题、关键词、屏蔽词
-- 再确认飞书卡片和飞书多维表格
+- 如果远端直连 X 失败，但有可用代理，优先把代理地址写入 `x.proxy_url`（例如 `http://127.0.0.1:7890` 或 `http://127.0.0.1:8888`）
+- 再根据 following 和历史命中总结“推荐方向 + 代表关键词”
+- 最后用一轮表单同时确认兴趣主题、补充关键词、屏蔽词、运行偏好、飞书卡片和飞书多维表格
 
 不要把“先手写 `config/local.yaml`”当成默认路径，除非用户明确要求。
+
+## OpenClaw 交互要求
+
+在 OpenClaw 里不要把 `setup` 的每一个 CLI 问题机械地逐条转发给用户，尤其不要直接回显已有的 `viewer_handle` 或 `viewer_user_id` 原值。
+
+正确做法是：
+
+1. 整体上尽量控制在两轮内完成：
+   - 第一轮：默认只收集 handle；只有 following 同步失败时，才补一张 user id / proxy 的高级访问表单
+   - 第二轮：following 同步后的一次性总表单，统一收兴趣方向、关键词、屏蔽词、运行偏好、输出设置
+2. 如果检测到已有 X 账号配置，只说“检测到已有 X 账号配置，是否沿用”，不要回显原值。
+3. 如果需要用户填写账号，明确解释：
+   - `X handle` 就是 `x.com/<handle>` 里的那段，例如 `https://x.com/sama` 对应 `sama`
+   - 如果不确定，可以直接发主页链接
+   - `X user id` 和 `proxy_url` 默认不要主动追问，只有同步 following 失败时再补
+4. 在 following 同步完成后，先用自然语言总结：
+   - 当前推断出的 2 到 4 个关注方向
+   - 每个方向为什么被推荐
+   - 默认会直接写入的关键词
+5. 然后一次性向用户索要这张总表单，而不是拆成多轮：
+
+```text
+expected_following_count=820
+following_count_confirmed=yes
+topics=1,2,4
+extra_keywords=paper, benchmark, product launch
+remove_keywords=
+disliked_keywords=
+default_mode=all_following
+digest_top_n=10
+include_replies=yes
+reply_like_threshold=100
+enable_feishu=yes
+enable_bitable=yes
+```
+
+如果用户没有额外修改项，允许直接回复“用默认推荐”。
+
+不要说“看看 setup 下一步是否允许补关键词”这类不确定表述；当前流程支持直接补充关键词，并会直接写入配置。
+像 `digest_top_n`、`include_replies`、`enable_bitable` 这类运行偏好，也应该放在这张总表单里一起收，不要单独追问。
+用户确认写入配置后，应该直接自动执行一次 `daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml`，让用户马上确认第一版日报是否符合预期。
 
 ## 生成日报
 

@@ -34,7 +34,7 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(stats["high_fit_posts"], 1)
         self.assertEqual(stats["high_signal_posts"], 1)
         self.assertEqual(stats["top_authors"], ["demo"])
-        self.assertEqual(stats["top_topics"], ["AI 编程"])
+        self.assertEqual(stats["top_topics"], ["AI 编程 / Coding Agent / 工作流"])
 
 
 if __name__ == "__main__":

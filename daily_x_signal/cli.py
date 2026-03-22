@@ -230,6 +230,11 @@ def cmd_generate(args: argparse.Namespace, config: dict, client: XReachClient) -
         )
         return 0
 
+    return print_generate_result(result, config)
+
+
+def print_generate_result(result: dict[str, object], config: dict) -> int:
+
     md_path = result.get("md_path")
     json_path = result.get("json_path")
     feishu_preview_path = result.get("feishu_preview_path")
@@ -617,12 +622,28 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "setup":
         target_config = Path(args.override_config) if args.override_config else LOCAL_CONFIG_PATH
+        def _post_write_generate(config_path: Path) -> int:
+            merged_config = AppConfig.load(args.config).merged_with(str(config_path)).raw
+            preview_args = argparse.Namespace(
+                command="generate",
+                config=args.config,
+                override_config=str(config_path),
+                window_mode="rolling_24h",
+                mode=None,
+                top_n=None,
+                dry_run=False,
+                force=False,
+            )
+            result = generate_digest(preview_args, merged_config, XReachClient(workdir=Path.cwd()))
+            return print_generate_result(result, merged_config)
+
         return run_setup(
             base_config_path=Path(args.config),
             target_config_path=target_config,
             client=XReachClient(workdir=Path.cwd()),
             history_path=STATE_PATH,
             following_cache_path=FOLLOWING_CACHE_PATH,
+            post_write_generate=_post_write_generate,
         )
     base_config = AppConfig.load(args.config)
     config = base_config.merged_with(args.override_config).raw

@@ -69,6 +69,29 @@ STOPWORDS = {
     "项目",
 }
 
+TOPIC_META = {
+    "ai_coding": {
+        "label": "AI 编程 / Coding Agent / 工作流",
+        "description": "更偏代码生成、工程效率、MCP、自动化工作流。",
+        "seed_keywords": ["codex", "claude code", "cursor", "mcp", "coding agent", "workflow"],
+    },
+    "agent_frameworks": {
+        "label": "Agent 框架 / 多智能体 / 编排",
+        "description": "更偏 agent 架构、多智能体协作、工具调用和 orchestration。",
+        "seed_keywords": ["agent", "multi agent", "tool calling", "orchestration", "langgraph", "autogen"],
+    },
+    "model_releases": {
+        "label": "新模型 / 新功能 / 产品发布",
+        "description": "更偏新模型发布、产品更新、功能 launch、demo 和生态动态。",
+        "seed_keywords": ["release", "launch", "feature", "product update", "demo", "benchmark"],
+    },
+    "papers_algorithms": {
+        "label": "模型研究 / 论文 / Benchmark",
+        "description": "更偏论文、算法、评测、benchmark 和研究进展。",
+        "seed_keywords": ["paper", "arxiv", "benchmark", "research", "reasoning", "algorithm"],
+    },
+}
+
 
 def build_interest_profile(config: dict[str, Any], authors: list[Author], history: dict[str, Any]) -> dict[str, Any]:
     cfg = config.get("personalization", {})
@@ -254,13 +277,18 @@ def snapshot_following_status(
 
 
 def topic_labels(topics: list[str]) -> list[str]:
-    mapping = {
-        "ai_coding": "AI 编程",
-        "agent_frameworks": "Agent 框架",
-        "model_releases": "模型发布",
-        "papers_algorithms": "论文/算法",
-    }
-    return [mapping.get(topic, topic) for topic in topics]
+    return [TOPIC_META.get(topic, {}).get("label", topic) for topic in topics]
+
+
+def topic_descriptions(topics: list[str]) -> list[str]:
+    return [TOPIC_META.get(topic, {}).get("description", "") for topic in topics]
+
+
+def topic_seed_keywords(topics: list[str]) -> list[str]:
+    results: list[str] = []
+    for topic in topics:
+        results.extend(TOPIC_META.get(topic, {}).get("seed_keywords", []))
+    return _dedupe(results)
 
 
 def extract_keywords_for_history(text: str) -> Counter[str]:

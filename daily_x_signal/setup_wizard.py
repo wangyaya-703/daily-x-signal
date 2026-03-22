@@ -6,7 +6,7 @@ import socket
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .collector import sync_following
@@ -14,7 +14,7 @@ from .config import AppConfig, deep_merge, save_yaml
 from .console import bool_text, print_section, render_table, status_text
 from .core_authors import load_history
 from .feishu_bitable import bitable_app_url
-from .personalization import build_interest_profile, topic_labels
+from .personalization import build_interest_profile, topic_descriptions, topic_labels, topic_seed_keywords
 from .x_client import XReachClient
 
 
@@ -24,6 +24,7 @@ def run_setup(
     client: XReachClient,
     history_path: Path,
     following_cache_path: Path,
+    post_write_generate: Callable[[Path], int] | None = None,
 ) -> int:
     base_config = AppConfig.load(base_config_path)
     target_override = AppConfig.load(target_config_path) if target_config_path.exists() else AppConfig(raw={}, path=target_config_path)
@@ -34,15 +35,15 @@ def run_setup(
     print(render_table(["Item", "Value"], [["Base Config", str(base_config_path)], ["Write Target", str(target_config_path)]]))
     print(render_table(["Flow", "What happens"], [["1", "检查依赖、认证、飞书输出条件"], ["2", "同步 following 并确认关注总数"], ["3", "根据 following + 历史结果推荐兴趣主题"], ["4", "确认输出方式与运行偏好"], ["5", "写入本地私有配置"]]))
 
-    viewer_handle = _ask("X handle", str(config.get("x", {}).get("viewer_handle") or ""))
-    viewer_user_id = _ask("X user id", str(config.get("x", {}).get("viewer_user_id") or ""))
+    existing_handle = str(config.get("x", {}).get("viewer_handle") or "").strip()
+    existing_user_id = str(config.get("x", {}).get("viewer_user_id") or "").strip()
     proxy_default = str(
         config.get("x", {}).get("proxy_url")
         or os.getenv("DAILY_X_SIGNAL_XREACH_PROXY")
         or os.getenv("XREACH_PROXY")
         or ""
     )
-    proxy_url = _ask("XReach proxy URL（可留空）", proxy_default)
+    viewer_handle, viewer_user_id, proxy_url = _collect_access_form(existing_handle, existing_user_id, proxy_default)
     if viewer_handle:
         config.setdefault("x", {})["viewer_handle"] = viewer_handle
     if viewer_user_id:
@@ -84,11 +85,37 @@ def run_setup(
         )
     else:
         print_section("following 同步")
-        print(render_table(["Status", "Reason"], [["WARN", "缺少 X 认证或 viewer_handle/viewer_user_id，跳过同步。"]]))
+        print(render_table(["Status", "Reason"], [["WARN", "缺少 X 认证或 X 账号配置，跳过同步。"]]))
 
-    expected_default = following_status.get("expected_following_count") or following_status.get("synced_count") or ""
-    expected_following_count = _ask("确认关注总数", str(expected_default))
-    following_confirmed = _ask_yes_no("是否确认这个关注总数", bool(config.get("x", {}).get("following_count_confirmed", False)))
+    if _should_offer_access_retry(following_status, viewer_user_id, proxy_url):
+        viewer_user_id, proxy_url = _collect_access_fallback(viewer_user_id, proxy_url)
+        if viewer_user_id:
+            config.setdefault("x", {})["viewer_user_id"] = viewer_user_id
+        if proxy_url:
+            config.setdefault("x", {})["proxy_url"] = proxy_url
+        client = XReachClient(binary=client.binary, workdir=client.workdir, proxy=proxy_url or None)
+        checks = collect_setup_checks(config, client, dotenv_values)
+        print_section("补充访问配置后检查")
+        print(render_table(["Check", "Status", "Detail"], [[item["name"], status_text(item["ok"]), item["detail"]] for item in checks]))
+        if _check_ok(checks, "xreach_auth") and (viewer_handle or viewer_user_id):
+            sync_result = sync_following(client, config)
+            authors = sync_result["authors"]
+            following_status = sync_result["status"]
+            _save_following_cache(following_cache_path, authors, following_status)
+            print_section("following 重试结果")
+            print(
+                render_table(
+                    ["Field", "Value"],
+                    [
+                        ["synced_count", following_status.get("synced_count", 0)],
+                        ["expected_following_count", following_status.get("expected_following_count", "")],
+                        ["completion_ratio", following_status.get("completion_ratio", "")],
+                        ["is_complete", bool_text(bool(following_status.get("is_complete", False)))],
+                        ["needs_confirmation", bool_text(bool(following_status.get("needs_confirmation", False)))],
+                        ["reason", following_status.get("reason", "")],
+                    ],
+                )
+            )
 
     history = load_history(history_path)
     interest_profile = build_interest_profile(config, authors, history)
@@ -97,8 +124,8 @@ def run_setup(
         render_table(
             ["Signal", "Value"],
             [
-                ["画像主题", "、".join(topic_labels(interest_profile.get("top_topics", []))) or "暂无"],
-                ["建议关键词", ", ".join(interest_profile.get("keywords", [])[:8]) or "暂无"],
+                ["推断方向", "、".join(topic_labels(interest_profile.get("top_topics", []))) or "暂无"],
+                ["自动提炼关键词", ", ".join(interest_profile.get("keywords", [])[:10]) or "暂无"],
                 ["高命中作者", ", ".join(f"@{handle}" for handle in list(interest_profile.get("trusted_authors", {}).keys())[:5]) or "暂无"],
             ],
         )
@@ -107,44 +134,52 @@ def run_setup(
     print_section("兴趣建议")
     print(
         render_table(
-            ["No", "Topic", "Recommended Weight"],
-            [[str(idx), label, f"{score:.2f}"] for idx, (_key, label, score) in enumerate(topic_choices, start=1)],
+            ["No", "Direction", "Why Recommended", "Suggested Terms"],
+            [
+                [str(idx), label, reason, examples]
+                for idx, (_key, label, _score, reason, examples) in enumerate(topic_choices, start=1)
+            ],
         )
     )
     default_topic_selection = ",".join(str(idx) for idx in range(1, min(3, len(topic_choices)) + 1))
-    selected_topic_numbers = _ask("选择关注主题编号（逗号分隔）", default_topic_selection)
-    selected_topics = _select_topics(topic_choices, selected_topic_numbers)
-    recommended_keywords = interest_profile.get("keywords", [])[:6]
-    print(render_table(["Recommended Keywords"], [[", ".join(recommended_keywords) or "暂无建议"]]))
-    extra_keywords = _split_csv(_ask("补充关键词（逗号分隔，可留空）", ""))
-    disliked_keywords = _split_csv(_ask("屏蔽关键词（逗号分隔，可留空）", ",".join(config.get("profile", {}).get("disliked_keywords", []))))
-    final_keywords = _dedupe([*recommended_keywords, *extra_keywords])
-
-    print_section("运行偏好")
     current_mode = str(config.get("profile", {}).get("default_mode", "all_following"))
     current_top_n = str(config.get("profile", {}).get("digest_top_n", 10))
     current_include_replies = bool(config.get("x", {}).get("include_replies", True))
     current_reply_threshold = str(config.get("x", {}).get("reply_like_threshold", 100))
-    print(
-        render_table(
-            ["Setting", "Current", "Meaning"],
-            [
-                ["default_mode", current_mode, "all_following / core_authors"],
-                ["digest_top_n", current_top_n, "每期飞书里默认展示多少条"],
-                ["include_replies", bool_text(current_include_replies), "是否纳入高质量回复"],
-                ["reply_like_threshold", current_reply_threshold, "回复进入候选池的最低点赞数"],
-            ],
-        )
-    )
-    default_mode = _ask_choice("选择默认扫描模式", ["all_following", "core_authors"], current_mode)
-    digest_top_n = _ask("日报默认展示条数", current_top_n)
-    include_replies = _ask_yes_no("是否纳入回复帖", current_include_replies)
-    reply_like_threshold = _ask("回复帖最低点赞阈值", current_reply_threshold if include_replies else "100")
-
     feishu_default = bool(config.get("outputs", {}).get("feishu", {}).get("enabled", False))
     bitable_cfg = config.get("outputs", {}).get("feishu_bitable", {})
     bitable_ready = bool(bitable_cfg.get("app_token")) and bool(bitable_cfg.get("table_id"))
-    print_section("输出设置")
+    seed_topics = _select_topics(topic_choices, default_topic_selection)
+    default_keyword_write = _dedupe([*interest_profile.get("keywords", [])[:8], *topic_seed_keywords(seed_topics)[:8]])[:12]
+    expected_default = following_status.get("expected_following_count") or following_status.get("synced_count") or ""
+    confirmed_default = bool(config.get("x", {}).get("following_count_confirmed", False))
+
+    print_section("偏好与运行表单")
+    print(
+        render_table(
+            ["Field", "Default", "How to fill"],
+            [
+                ["expected_following_count", str(expected_default), "确认你的关注总数；如果当前同步数看起来正确，就直接用默认值。"],
+                ["following_count_confirmed", "yes" if confirmed_default else "no", "yes/no，确认上面的 following 总数。"],
+                ["topics", default_topic_selection, "关注方向编号，逗号分隔；默认取上面的前三项。"],
+                ["extra_keywords", "", "额外新增的关键词，逗号分隔。"],
+                ["remove_keywords", "", "从默认写入关键词里删掉不想保留的词，逗号分隔。"],
+                ["disliked_keywords", ",".join(config.get("profile", {}).get("disliked_keywords", [])), "明确不想看的词，逗号分隔。"],
+                ["default_mode", current_mode, "all_following 或 core_authors。"],
+                ["digest_top_n", current_top_n, "飞书卡片默认展示多少条。"],
+                ["include_replies", "yes" if current_include_replies else "no", "yes/no，是否纳入高质量回复。"],
+                ["reply_like_threshold", current_reply_threshold, "回复进入候选池的最低点赞数。"],
+                ["enable_feishu", "yes" if feishu_default else "no", "yes/no，是否发送飞书卡片。"],
+                ["enable_bitable", "yes" if (bool(bitable_cfg.get("enabled", False)) if bitable_ready else False) else "no", "yes/no，是否写入帖子追踪表。"],
+            ],
+        )
+    )
+    print(
+        render_table(
+            ["Default Keyword Write", "Value"],
+            [["interest_keywords", ", ".join(default_keyword_write) or "暂无建议"]],
+        )
+    )
     print(
         render_table(
             ["Output", "Current", "Ready", "Detail"],
@@ -168,8 +203,38 @@ def run_setup(
                 ],
             )
         )
-    enable_feishu = _ask_yes_no("启用飞书卡片推送", feishu_default)
-    enable_bitable = _ask_yes_no("启用飞书多维表格追踪", bool(bitable_cfg.get("enabled", False)) if bitable_ready else False)
+    form_defaults = {
+        "expected_following_count": str(expected_default),
+        "following_count_confirmed": "yes" if confirmed_default else "no",
+        "topics": default_topic_selection,
+        "extra_keywords": "",
+        "remove_keywords": "",
+        "disliked_keywords": ",".join(config.get("profile", {}).get("disliked_keywords", [])),
+        "default_mode": current_mode,
+        "digest_top_n": current_top_n,
+        "include_replies": "yes" if current_include_replies else "no",
+        "reply_like_threshold": current_reply_threshold if current_include_replies else "100",
+        "enable_feishu": "yes" if feishu_default else "no",
+        "enable_bitable": "yes" if (bool(bitable_cfg.get("enabled", False)) if bitable_ready else False) else "no",
+    }
+    form_values = _ask_form(
+        "请一次性填写上面这张表单。格式是 key=value，每行一个字段；直接回车则全部使用默认值。",
+        form_defaults,
+    )
+    selected_topics = _select_topics(topic_choices, form_values["topics"])
+    recommended_keywords = _dedupe([*interest_profile.get("keywords", [])[:8], *topic_seed_keywords(selected_topics)[:8]])[:12]
+    removed_keywords = set(_split_csv(form_values["remove_keywords"]))
+    extra_keywords = _split_csv(form_values["extra_keywords"])
+    disliked_keywords = _split_csv(form_values["disliked_keywords"])
+    final_keywords = _dedupe([keyword for keyword in recommended_keywords if keyword not in removed_keywords] + extra_keywords)
+    expected_following_count = form_values["expected_following_count"]
+    following_confirmed = _parse_yes_no(form_values["following_count_confirmed"], confirmed_default)
+    default_mode = form_values["default_mode"] if form_values["default_mode"] in {"all_following", "core_authors"} else current_mode
+    digest_top_n = form_values["digest_top_n"]
+    include_replies = _parse_yes_no(form_values["include_replies"], current_include_replies)
+    reply_like_threshold = form_values["reply_like_threshold"] if include_replies else "100"
+    enable_feishu = _parse_yes_no(form_values["enable_feishu"], feishu_default)
+    enable_bitable = _parse_yes_no(form_values["enable_bitable"], bool(bitable_cfg.get("enabled", False)) if bitable_ready else False)
 
     patch = {
         "profile": {
@@ -204,9 +269,9 @@ def run_setup(
         render_table(
             ["Field", "Value"],
             [
-                ["viewer_handle", final_override.get("x", {}).get("viewer_handle", "")],
-                ["viewer_user_id", final_override.get("x", {}).get("viewer_user_id", "")],
-                ["proxy_url", final_override.get("x", {}).get("proxy_url", "")],
+                ["viewer_handle", _mask_value(str(final_override.get("x", {}).get("viewer_handle", "") or ""))],
+                ["viewer_user_id", "已配置" if final_override.get("x", {}).get("viewer_user_id") else "留空"],
+                ["proxy_url", final_override.get("x", {}).get("proxy_url", "") or "留空"],
                 ["expected_following_count", final_override.get("x", {}).get("expected_following_count", "")],
                 ["following_count_confirmed", bool_text(bool(final_override.get("x", {}).get("following_count_confirmed", False)))],
                 ["preferred_topics", "、".join(topic_labels(final_override.get("profile", {}).get("preferred_topics", [])))],
@@ -236,6 +301,10 @@ def run_setup(
     if final_override.get("outputs", {}).get("feishu_bitable", {}).get("enabled", False):
         next_rows.append(["查看帖子追踪表", bitable_app_url({"outputs": {"feishu_bitable": final_override.get("outputs", {}).get("feishu_bitable", {})}}) or ""])
     print(render_table(["Next Step", "Command"], next_rows))
+    if post_write_generate is not None:
+        print_section("首版日报预览")
+        print("已按当前配置自动执行 rolling_24h generate，供你确认首版结果。")
+        return post_write_generate(target_config_path)
     return 0
 
 
@@ -284,7 +353,7 @@ def collect_setup_checks(config: dict[str, Any], client: XReachClient, dotenv_va
             "key": "viewer_profile",
             "name": "viewer config",
             "ok": bool(viewer_handle or viewer_user_id),
-            "detail": viewer_handle or viewer_user_id or "缺少 viewer_handle / viewer_user_id",
+            "detail": _viewer_config_status(viewer_handle, viewer_user_id),
         }
     )
     checks.append(
@@ -379,12 +448,30 @@ def _save_following_cache(path: Path, authors: list[Any], status: dict[str, Any]
     )
 
 
-def _topic_choices(config: dict[str, Any], interest_profile: dict[str, Any]) -> list[tuple[str, str, float]]:
-    choices: list[tuple[str, str, float]] = []
+def _topic_choices(config: dict[str, Any], interest_profile: dict[str, Any]) -> list[tuple[str, str, float, str, str]]:
+    choices: list[tuple[str, str, float, str, str]] = []
     weights = interest_profile.get("topic_weights", {})
-    label_map = dict(zip(config.get("topics", {}).keys(), topic_labels(list(config.get("topics", {}).keys()))))
+    topic_keys = list(config.get("topics", {}).keys())
+    label_map = dict(zip(topic_keys, topic_labels(topic_keys)))
+    description_map = dict(zip(topic_keys, topic_descriptions(topic_keys)))
+    profile_keywords = [str(keyword).lower() for keyword in interest_profile.get("keywords", [])]
     for topic in config.get("topics", {}).keys():
-        choices.append((topic, label_map.get(topic, topic), float(weights.get(topic, 0.0))))
+        topic_cfg = config.get("topics", {}).get(topic, {})
+        topic_keywords = [str(keyword) for keyword in topic_cfg.get("keywords", [])]
+        matched_keywords = [
+            keyword
+            for keyword in topic_keywords
+            if any(keyword.lower() in profile_keyword or profile_keyword in keyword.lower() for profile_keyword in profile_keywords)
+        ][:4]
+        score = float(weights.get(topic, 0.0))
+        if matched_keywords:
+            reason = f"following 和历史里更常出现：{', '.join(matched_keywords[:3])}"
+        elif score > 0:
+            reason = description_map.get(topic, "当前 following 和历史命中更偏向这个方向。")
+        else:
+            reason = f"{description_map.get(topic, '当前证据较弱，但可以作为补充方向。')}"
+        examples = ", ".join(_dedupe([*matched_keywords, *topic_seed_keywords([topic])])[:5])
+        choices.append((topic, label_map.get(topic, topic), score, reason, examples))
     choices.sort(key=lambda item: item[2], reverse=True)
     return choices
 
@@ -439,3 +526,131 @@ def _ask_choice(prompt: str, options: list[str], default: str) -> str:
         if value in options:
             return value
         print(f"请输入以下选项之一: {option_text}")
+
+
+def _ask_form(prompt: str, defaults: dict[str, str]) -> dict[str, str]:
+    print(prompt)
+    print("示例：")
+    for key, value in defaults.items():
+        print(f"  {key}={value}")
+    print("开始输入；每行一个 key=value，直接回车结束并接受默认值。")
+    lines: list[str] = []
+    while True:
+        line = input().strip()
+        if not line:
+            break
+        lines.append(line)
+    values = dict(defaults)
+    values.update(_parse_form_lines(lines))
+    return values
+
+
+def _collect_access_form(existing_handle: str, existing_user_id: str, existing_proxy_url: str) -> tuple[str, str, str]:
+    print_section("访问配置")
+    if existing_handle or existing_user_id or existing_proxy_url:
+        print(
+            render_table(
+                ["Field", "Status"],
+                [
+                    ["已有配置", "检测到已配置的 X 访问配置"],
+                    ["viewer_handle", _mask_value(existing_handle)],
+                    ["viewer_user_id", "已配置" if existing_user_id else "留空"],
+                    ["proxy_url", existing_proxy_url or "留空"],
+                ],
+            )
+        )
+        if _ask_yes_no("是否沿用当前 X 访问配置", True):
+            return existing_handle, existing_user_id, existing_proxy_url
+
+    print(
+        render_table(
+            ["Field", "How to fill"],
+            [
+                ["X handle", "填 x.com/<handle> 里的那段名字；例如 https://x.com/sama 就填 sama，也可以直接贴主页链接。"],
+                ["X user id / proxy_url", "默认不需要现在填写；只有 following 同步失败时再补。"],
+            ],
+        )
+    )
+    viewer_handle = _normalize_x_handle(_ask("X handle（必填，可填主页链接）", existing_handle))
+    return viewer_handle, existing_user_id, existing_proxy_url
+
+
+def _collect_access_fallback(existing_user_id: str, existing_proxy_url: str) -> tuple[str, str]:
+    print_section("补充访问配置")
+    print(
+        render_table(
+            ["Field", "How to fill"],
+            [
+                ["viewer_user_id", "可留空；只有 handle 路径不稳定时再补。"],
+                ["proxy_url", "可留空；远端访问 X 不稳定时再填，例如 http://127.0.0.1:7890。"],
+            ],
+        )
+    )
+    form_values = _ask_form(
+        "following 同步看起来不稳定。若你知道 user id 或代理地址，可在这里一次性补充；直接回车则跳过。",
+        {
+            "viewer_user_id": existing_user_id,
+            "proxy_url": existing_proxy_url,
+        },
+    )
+    return form_values["viewer_user_id"].strip(), form_values["proxy_url"].strip()
+
+
+def _normalize_x_handle(value: str) -> str:
+    raw = value.strip()
+    if not raw:
+        return ""
+    if "://" in raw:
+        parsed = urlparse(raw)
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if path_parts:
+            return path_parts[0].lstrip("@")
+    return raw.removeprefix("@")
+
+
+def _viewer_config_status(viewer_handle: str, viewer_user_id: str) -> str:
+    if viewer_handle and viewer_user_id:
+        return "viewer_handle 已配置 / viewer_user_id 已配置"
+    if viewer_handle:
+        return "viewer_handle 已配置"
+    if viewer_user_id:
+        return "viewer_user_id 已配置"
+    return "缺少 viewer_handle / viewer_user_id"
+
+
+def _mask_value(value: str) -> str:
+    if not value:
+        return "未配置"
+    if len(value) <= 4:
+        return "*" * len(value)
+    return f"{value[:2]}***{value[-2:]}"
+
+
+def _should_offer_access_retry(following_status: dict[str, Any], viewer_user_id: str, proxy_url: str) -> bool:
+    reason = str(following_status.get("reason", ""))
+    if viewer_user_id and proxy_url:
+        return False
+    return "following 同步失败" in reason or "未同步到任何 following" in reason
+
+
+def _parse_form_lines(lines: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in lines:
+        if "=" not in raw_line:
+            continue
+        key, value = raw_line.split("=", 1)
+        cleaned_key = key.strip()
+        if cleaned_key:
+            values[cleaned_key] = value.strip()
+    return values
+
+
+def _parse_yes_no(value: str, default: bool) -> bool:
+    lowered = value.strip().lower()
+    if not lowered:
+        return default
+    if lowered in {"y", "yes", "true", "1"}:
+        return True
+    if lowered in {"n", "no", "false", "0"}:
+        return False
+    return default
