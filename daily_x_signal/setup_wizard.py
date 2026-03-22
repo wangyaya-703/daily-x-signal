@@ -63,6 +63,8 @@ def run_setup(
     print(render_table(["Item", "Value"], [["Base Config", str(base_config_path)], ["Write Target", str(target_config_path)]]))
     print(render_table(["Flow", "What happens"], [["1", "检查依赖、认证、飞书输出条件"], ["2", "同步 following 并确认关注总数"], ["3", "根据 following + 历史结果推荐兴趣主题"], ["4", "确认输出方式与运行偏好"], ["5", "写入本地私有配置"]]))
 
+    client = _ensure_xreach_ready(client)
+
     existing_handle = str(config.get("x", {}).get("viewer_handle") or "").strip()
     existing_user_id = str(config.get("x", {}).get("viewer_user_id") or "").strip()
     proxy_default = str(
@@ -348,6 +350,72 @@ def collect_setup_checks(config: dict[str, Any], client: XReachClient, dotenv_va
         }
     )
     return checks
+
+
+def _ensure_xreach_ready(client: XReachClient) -> XReachClient:
+    resolved_binary = shutil.which(client.binary) if not Path(client.binary).exists() else client.binary
+    if resolved_binary and os.access(str(resolved_binary), os.X_OK):
+        return client
+
+    npm_binary = shutil.which("npm")
+    node_binary = shutil.which("node")
+    print_section("xreach 安装")
+    print(
+        render_table(
+            ["Field", "Value"],
+            [
+                ["xreach", resolved_binary or "未找到"],
+                ["npm", npm_binary or "未找到"],
+                ["node", node_binary or "未找到"],
+                ["Install Command", "npm install -g xreach-cli"],
+            ],
+        )
+    )
+    if not npm_binary or not node_binary:
+        print("未检测到 npm 或 node，暂时无法自动安装 xreach-cli。")
+        return client
+    if not _ask_yes_no("未检测到可用的 xreach，是否现在尝试自动安装 xreach-cli", True):
+        return client
+
+    install_result = _install_xreach_cli(npm_binary)
+    print(
+        render_table(
+            ["Step", "Result", "Detail"],
+            [[
+                "xreach install",
+                "OK" if install_result["ok"] else "WARN",
+                install_result["detail"],
+            ]],
+        )
+    )
+    if not install_result["ok"]:
+        return client
+    return XReachClient(binary="xreach", workdir=client.workdir, proxy=client.proxy)
+
+
+def _install_xreach_cli(npm_binary: str) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(
+            [npm_binary, "install", "-g", "xreach-cli"],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return {"ok": False, "detail": f"无法执行 npm install -g xreach-cli：{exc.strerror or exc}"}
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        first_line = detail[0] if detail else "npm install -g xreach-cli 失败"
+        return {"ok": False, "detail": first_line}
+
+    resolved = shutil.which("xreach")
+    if resolved:
+        return {"ok": True, "detail": f"已安装：{resolved}"}
+    fallback = Path.home() / ".npm-global" / "bin" / "xreach"
+    if fallback.exists():
+        return {"ok": True, "detail": f"已安装：{fallback}"}
+    return {"ok": True, "detail": "安装完成；若当前 shell 还找不到 xreach，请确认 npm 全局 bin 已加入 PATH。"}
 
 
 def load_env_file(path: Path) -> dict[str, str]:

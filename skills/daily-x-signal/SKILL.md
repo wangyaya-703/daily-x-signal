@@ -1,6 +1,6 @@
 ---
 name: daily-x-signal
-version: "2026.03.22.5"
+version: "2026.03.22.6"
 description: 从关注的 X 账号中生成高信号中文日报，并优先通过 CLI setup 完成引导式配置，再生成过去 24 小时或调度窗口内的日报。用户提到 X/Twitter 日报、过去 24 小时动态、重点帖子排序、今日必读、飞书卡片、帖子追踪表、首次配置日报机器人时，都应使用这个 skill，尤其是在 OpenClaw 远端环境中。
 metadata:
   trigger-hint: 当用户想配置或生成 X 日报、检查 daily-x-signal 是否可运行、补齐飞书和 xreach 环境、查看过去 24 小时值得看的帖子时使用。
@@ -79,6 +79,13 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 8. 只有在前置条件满足后，才运行 `generate`。
 
 如果第 1-4 步任一步失败，先返回缺失清单，再决定是否继续 bootstrap。
+如果缺的是 `xreach`，并且远端已有 `node` + `npm`，优先建议直接执行：
+
+```bash
+npm install -g xreach-cli
+```
+
+用户同意时，可以在配置过程中顺手安装，不需要让用户离开当前 setup 流程。
 
 ## 缺失清单输出格式
 
@@ -115,6 +122,7 @@ daily-x-signal setup --override-config config/local.yaml
 引导重点：
 
 - 先确认 following 是否读全
+- 如果缺 `xreach` 且本机有 `npm`，允许 setup 先尝试 `npm install -g xreach-cli`
 - 如果远端直连 X 失败，但有可用代理，优先把代理地址写入 `x.proxy_url`（例如 `http://127.0.0.1:7890` 或 `http://127.0.0.1:8888`）
 - 再根据 following 和历史命中总结“推荐方向 + 代表关键词”
 - 最后用一轮表单同时确认兴趣主题、少量补充关键词、推送时间、宿主模式，以及输出方式

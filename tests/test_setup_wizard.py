@@ -6,8 +6,10 @@ from unittest.mock import patch
 from daily_x_signal.setup_wizard import (
     _default_output_choice_for_host_mode,
     _current_host_mode,
+    _ensure_xreach_ready,
     _format_push_time,
     _host_mode_patch,
+    _install_xreach_cli,
     _infer_output_choice,
     _infer_style_choice,
     _is_existing_user_setup,
@@ -174,6 +176,27 @@ class SetupWizardTests(unittest.TestCase):
         proxy_check = next(item for item in checks if item["key"] == "xreach_proxy")
         self.assertFalse(proxy_check["ok"])
         self.assertIn("未监听", proxy_check["detail"])
+
+    def test_install_xreach_cli_reports_success_when_binary_found(self) -> None:
+        completed = unittest.mock.Mock(returncode=0, stdout="ok", stderr="")
+        with patch("daily_x_signal.setup_wizard.subprocess.run", return_value=completed), patch(
+            "daily_x_signal.setup_wizard.shutil.which",
+            side_effect=["/opt/homebrew/bin/xreach"],
+        ):
+            result = _install_xreach_cli("/opt/homebrew/bin/npm")
+        self.assertTrue(result["ok"])
+        self.assertIn("xreach", result["detail"])
+
+    def test_ensure_xreach_ready_installs_when_missing(self) -> None:
+        client = XReachClient(binary="xreach", workdir=".")
+        with patch("daily_x_signal.setup_wizard.shutil.which", side_effect=[None, "/opt/homebrew/bin/npm", "/opt/homebrew/bin/node", "/opt/homebrew/bin/xreach"]), patch(
+            "daily_x_signal.setup_wizard.Path.exists", return_value=False
+        ), patch("daily_x_signal.setup_wizard._ask_yes_no", return_value=True), patch(
+            "daily_x_signal.setup_wizard._install_xreach_cli",
+            return_value={"ok": True, "detail": "installed"},
+        ):
+            ready = _ensure_xreach_ready(client)
+        self.assertIsInstance(ready, XReachClient)
 
     def test_topic_choices_include_directional_copy_and_seed_terms(self) -> None:
         config = {

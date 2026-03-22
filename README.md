@@ -35,6 +35,14 @@
 - `xreach` CLI
 - `requests`、`PyYAML`（安装项目时会自动带上）
 
+如果你还没装 `xreach`，现在 `daily-x-signal setup` 会在检测到本机已有 `node` + `npm` 时，直接询问是否自动执行：
+
+```bash
+npm install -g xreach-cli
+```
+
+也可以手动先装好再继续配置。
+
 ### 关于 X / Twitter 登录态
 
 仅仅安装这个 Skill 或仓库，并不会自动获得你的 X 登录态，也不会自动帮你拿到浏览器 cookies。

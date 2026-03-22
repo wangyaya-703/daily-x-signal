@@ -13,7 +13,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         text = SKILL_PATH.read_text(encoding="utf-8")
         self.assertIn("user-invocable: true", text)
         self.assertIn('emoji: "📰"', text)
-        self.assertIn('version: "2026.03.22.5"', text)
+        self.assertIn('version: "2026.03.22.6"', text)
 
     def test_skill_includes_openclaw_workspace_bootstrap_path(self) -> None:
         text = SKILL_PATH.read_text(encoding="utf-8")
@@ -83,6 +83,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         self.assertIn("OpenClaw 绑定的 Feishu Bot", text)
         self.assertIn("OpenClaw HEARTBEAT", text)
         self.assertIn("daily-x-signal schedule-tick --override-config config/local.yaml", text)
+        self.assertIn("npm install -g xreach-cli", text)
 
 
 if __name__ == "__main__":
