@@ -257,14 +257,14 @@ def run_setup(
     save_yaml(target_config_path, final_override)
     print_section("完成")
     next_rows = [
-        ["验证 following", f"daily-x-signal sync-authors --override-config {target_config_path}"],
-        ["生成样例日报", f"daily-x-signal generate --window-mode rolling_24h --override-config {target_config_path}"],
-        ["调度检查", f"daily-x-signal schedule-tick --override-config {target_config_path}"],
+        ["验证 following", f"./scripts/run_cli.sh sync-authors --override-config {target_config_path}"],
+        ["生成样例日报", f"./scripts/run_cli.sh generate --window-mode rolling_24h --override-config {target_config_path}"],
+        ["调度检查", f"./scripts/run_cli.sh schedule-tick --override-config {target_config_path}"],
     ]
     if final_override.get("outputs", {}).get("feishu_bitable", {}).get("enabled", False):
         next_rows.append(["查看帖子追踪表", bitable_app_url({"outputs": {"feishu_bitable": final_override.get("outputs", {}).get("feishu_bitable", {})}}) or ""])
     if host_mode == "openclaw":
-        next_rows.append(["OpenClaw HEARTBEAT", f"daily-x-signal schedule-tick --override-config {target_config_path}"])
+        next_rows.append(["OpenClaw HEARTBEAT", f"./scripts/run_cli.sh schedule-tick --override-config {target_config_path}"])
     print(render_table(["Next Step", "Command"], next_rows))
     if post_write_generate is not None:
         print_section("首版日报预览")
@@ -749,6 +749,13 @@ def _collect_preference_choices(
         push_time = _ask("设置日报推送时间（HH:MM）", current_push_time)
         selected_topics = _select_topics(topic_choices, topic_selection)
         final_keywords = _dedupe([*_build_recommended_keywords(interest_profile, selected_topics, existing_keywords), *extra_keywords])
+        enable_feishu, enable_bitable = _default_existing_user_outputs_for_host_mode(
+            host_mode,
+            feishu_default=feishu_default,
+            bitable_enabled=existing_bitable_enabled,
+            feishu_ready=_check_ok(checks, "feishu_app"),
+            bitable_ready=bitable_ready,
+        )
         return {
             "host_mode": host_mode,
             "selected_topics": selected_topics,
@@ -761,8 +768,8 @@ def _collect_preference_choices(
             "digest_top_n": current_top_n,
             "include_replies": current_include_replies,
             "reply_like_threshold": current_reply_threshold,
-            "enable_feishu": feishu_default,
-            "enable_bitable": existing_bitable_enabled,
+            "enable_feishu": enable_feishu,
+            "enable_bitable": enable_bitable,
             "bitable_ready": bitable_ready,
         }
 
@@ -875,6 +882,19 @@ def _default_output_choice_for_host_mode(
     if host_mode == "openclaw" and feishu_ready:
         return "card_and_table" if bitable_ready else "card_only"
     return _infer_output_choice(feishu_default, bitable_enabled)
+
+
+def _default_existing_user_outputs_for_host_mode(
+    host_mode: str,
+    *,
+    feishu_default: bool,
+    bitable_enabled: bool,
+    feishu_ready: bool,
+    bitable_ready: bool,
+) -> tuple[bool, bool]:
+    if host_mode == "openclaw" and feishu_ready:
+        return True, bitable_enabled if bitable_ready else False
+    return feishu_default, bitable_enabled if bitable_ready else False
 
 
 def _resolve_output_choice(choice: str, feishu_default: bool, bitable_default: bool, bitable_ready: bool) -> tuple[bool, bool]:

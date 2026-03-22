@@ -1,6 +1,6 @@
 ---
 name: daily-x-signal
-version: "2026.03.22.6"
+version: "2026.03.22.7"
 description: 从关注的 X 账号中生成高信号中文日报，并优先通过 CLI setup 完成引导式配置，再生成过去 24 小时或调度窗口内的日报。用户提到 X/Twitter 日报、过去 24 小时动态、重点帖子排序、今日必读、飞书卡片、帖子追踪表、首次配置日报机器人时，都应使用这个 skill，尤其是在 OpenClaw 远端环境中。
 metadata:
   trigger-hint: 当用户想配置或生成 X 日报、检查 daily-x-signal 是否可运行、补齐飞书和 xreach 环境、查看过去 24 小时值得看的帖子时使用。
@@ -74,7 +74,7 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 3. 检查依赖是否存在：`python3.11`、`xreach`、`git`、`daily-x-signal`。
 4. 检查 `xreach auth check` 是否通过。
 5. 检查 `config/local.yaml` 是否存在。
-6. 如果是首次配置，优先运行 `daily-x-signal setup`，不要先让用户手改 YAML。
+6. 如果是首次配置，优先运行 `./scripts/run_cli.sh setup`，不要先让用户手改 YAML。
 7. 如果用户明确在 OpenClaw 里使用这个 skill，优先建议 `host_mode=openclaw`。
 8. 只有在前置条件满足后，才运行 `generate`。
 
@@ -107,16 +107,14 @@ npm install -g xreach-cli
 
 ```bash
 cd ~/.openclaw/workspace/daily-x-signal
-if [ -f .env.local ]; then set -a; source .env.local; set +a; fi
-daily-x-signal setup
+./scripts/run_cli.sh setup
 ```
 
 如果用户希望把结果写入自定义文件，也可以用：
 
 ```bash
 cd ~/.openclaw/workspace/daily-x-signal
-if [ -f .env.local ]; then set -a; source .env.local; set +a; fi
-daily-x-signal setup --override-config config/local.yaml
+./scripts/run_cli.sh setup --override-config config/local.yaml
 ```
 
 引导重点：
@@ -166,12 +164,12 @@ output=card_and_table
 
 不要说“看看 setup 下一步是否允许补关键词”这类不确定表述；当前流程支持直接补充关键词，并会直接写入配置。
 像 `digest_top_n`、`include_replies`、`enable_bitable` 这类运行偏好，不要逐项追问。新用户用 `style` 和 `output` 两个选择覆盖即可；老用户默认沿用旧设置。
-用户确认写入配置后，应该直接自动执行一次 `daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml` 预览，让用户马上确认第一版日报是否符合预期；这次预览不应该实际推送到飞书或帖子追踪表。
+用户确认写入配置后，应该直接自动执行一次 `./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml` 预览，让用户马上确认第一版日报是否符合预期；这次预览不应该实际推送到飞书或帖子追踪表。
 
 在 `openclaw` 模式下，最终正式推送应优先走：
 
 - OpenClaw 绑定的 Feishu Bot
-- OpenClaw HEARTBEAT -> `daily-x-signal schedule-tick --override-config config/local.yaml`
+- OpenClaw HEARTBEAT -> `./scripts/run_cli.sh schedule-tick --override-config config/local.yaml`
 
 不要默认要求用户继续维护一套独立的 GitHub 定时兜底，除非用户明确要保留双保险。
 
@@ -189,24 +187,21 @@ output=card_and_table
 
 ```bash
 cd ~/.openclaw/workspace/daily-x-signal
-if [ -f .env.local ]; then set -a; source .env.local; set +a; fi
-daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml
+./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml
 ```
 
 如需调度窗口日报：
 
 ```bash
 cd ~/.openclaw/workspace/daily-x-signal
-if [ -f .env.local ]; then set -a; source .env.local; set +a; fi
-daily-x-signal generate --override-config config/local.yaml
+./scripts/run_cli.sh generate --override-config config/local.yaml
 ```
 
 如需只检查 following：
 
 ```bash
 cd ~/.openclaw/workspace/daily-x-signal
-if [ -f .env.local ]; then set -a; source .env.local; set +a; fi
-daily-x-signal sync-authors --override-config config/local.yaml
+./scripts/run_cli.sh sync-authors --override-config config/local.yaml
 ```
 
 ## 结果读取
@@ -248,11 +243,12 @@ python -m pip install -e .
 cd ~/.openclaw/workspace/daily-x-signal
 unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 source .venv/bin/activate
-daily-x-signal --help
+./scripts/run_cli.sh --help
 xreach auth check
 ```
 
 如果 `xreach auth check` 失败，不要继续生成日报，先明确告诉用户必须先完成 X 登录态。
+在 OpenClaw 里优先通过 `./scripts/run_cli.sh ...` 调用，不要假设 `daily-x-signal` 一定已经挂到全局 PATH。
 
 如果 `xreach auth check` 正常、但 `xreach user` / `following` / `tweets` 仍然失败，优先判断是否需要通过 `--proxy` 出海，并把可用代理地址落到 `x.proxy_url`，而不是反复重试直连。
 

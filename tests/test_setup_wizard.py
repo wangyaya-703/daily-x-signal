@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from daily_x_signal.setup_wizard import (
     _default_output_choice_for_host_mode,
+    _default_existing_user_outputs_for_host_mode,
     _current_host_mode,
     _ensure_xreach_ready,
     _format_push_time,
@@ -107,6 +108,16 @@ class SetupWizardTests(unittest.TestCase):
         )
         self.assertEqual(_resolve_output_choice("keep", True, True, True), (True, True))
         self.assertEqual(_resolve_output_choice("card_and_table", True, False, False), (True, False))
+        self.assertEqual(
+            _default_existing_user_outputs_for_host_mode(
+                "openclaw",
+                feishu_default=False,
+                bitable_enabled=True,
+                feishu_ready=True,
+                bitable_ready=True,
+            ),
+            (True, True),
+        )
 
     def test_parse_and_format_push_time(self) -> None:
         self.assertEqual(_parse_time_hhmm("08:30"), (8, 30))

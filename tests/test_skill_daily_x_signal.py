@@ -13,7 +13,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         text = SKILL_PATH.read_text(encoding="utf-8")
         self.assertIn("user-invocable: true", text)
         self.assertIn('emoji: "📰"', text)
-        self.assertIn('version: "2026.03.22.6"', text)
+        self.assertIn('version: "2026.03.22.7"', text)
 
     def test_skill_includes_openclaw_workspace_bootstrap_path(self) -> None:
         text = SKILL_PATH.read_text(encoding="utf-8")
@@ -24,8 +24,8 @@ class DailyXSignalSkillTests(unittest.TestCase):
 
     def test_skill_requires_setup_before_generate(self) -> None:
         text = SKILL_PATH.read_text(encoding="utf-8")
-        setup_pos = text.find("daily-x-signal setup")
-        generate_pos = text.find("daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml")
+        setup_pos = text.find("./scripts/run_cli.sh setup")
+        generate_pos = text.find("./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml")
         self.assertGreaterEqual(setup_pos, 0)
         self.assertGreaterEqual(generate_pos, 0)
         self.assertLess(setup_pos, generate_pos)
@@ -59,7 +59,8 @@ class DailyXSignalSkillTests(unittest.TestCase):
 
     def test_skill_sources_dotenv_before_runtime_commands(self) -> None:
         text = SKILL_PATH.read_text(encoding="utf-8")
-        self.assertIn("if [ -f .env.local ]; then set -a; source .env.local; set +a; fi", text)
+        self.assertIn("./scripts/run_cli.sh", text)
+        self.assertIn("不要假设 `daily-x-signal` 一定已经挂到全局 PATH", text)
 
     def test_skill_requires_batch_form_and_no_identity_echo(self) -> None:
         text = SKILL_PATH.read_text(encoding="utf-8")
@@ -68,7 +69,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         self.assertIn("不要说“看看 setup 下一步是否允许补关键词”", text)
         self.assertIn("默认只收集 handle", text)
         self.assertIn("只有 following 同步失败时", text)
-        self.assertIn("自动执行一次 `daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml`", text)
+        self.assertIn("自动执行一次 `./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml`", text)
         self.assertIn("建议新开一个 OpenClaw 会话", text)
         self.assertIn("老用户只确认推荐兴趣方向", text)
         self.assertIn("style=balanced", text)
@@ -82,7 +83,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         self.assertIn("`openclaw`", text)
         self.assertIn("OpenClaw 绑定的 Feishu Bot", text)
         self.assertIn("OpenClaw HEARTBEAT", text)
-        self.assertIn("daily-x-signal schedule-tick --override-config config/local.yaml", text)
+        self.assertIn("./scripts/run_cli.sh schedule-tick --override-config config/local.yaml", text)
         self.assertIn("npm install -g xreach-cli", text)
 
 

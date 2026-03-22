@@ -90,6 +90,13 @@ daily-x-signal generate --window-mode rolling_24h
 daily-x-signal show-core-authors
 ```
 
+如果你是在 OpenClaw 远端环境里运行，优先用仓库自带的入口，避免 PATH 不一致：
+
+```bash
+./scripts/run_cli.sh setup
+./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml
+```
+
 ## 配置方式
 
 基础配置文件：
