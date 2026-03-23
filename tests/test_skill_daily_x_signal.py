@@ -13,7 +13,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         text = SKILL_PATH.read_text(encoding="utf-8")
         self.assertIn("user-invocable: true", text)
         self.assertIn('emoji: "📰"', text)
-        self.assertIn('version: "2026.03.23.2"', text)
+        self.assertIn('version: "2026.03.23.3"', text)
 
     def test_skill_includes_openclaw_workspace_bootstrap_path(self) -> None:
         text = SKILL_PATH.read_text(encoding="utf-8")
@@ -76,6 +76,11 @@ class DailyXSignalSkillTests(unittest.TestCase):
         self.assertIn("output=card_and_table", text)
         self.assertIn("push_time=08:30", text)
         self.assertIn("不应该实际推送到飞书或帖子追踪表", text)
+        self.assertIn("不要只说“关注方向编号 [1,2,3]（默认推荐）”", text)
+        self.assertIn("1. AI 编程 / Coding Agent / 工作流", text)
+        self.assertIn("2. Agent 框架 / 多智能体 / 编排", text)
+        self.assertIn("3. 新模型 / 新功能 / 产品发布", text)
+        self.assertIn("4. 模型研究 / 论文 / Benchmark", text)
 
     def test_skill_describes_standalone_and_openclaw_modes(self) -> None:
         text = SKILL_PATH.read_text(encoding="utf-8")
@@ -88,6 +93,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         self.assertIn("~/.openclaw/workspace/HEARTBEAT.md", text)
         self.assertIn("重新配置 / 重跑 setup / 更新配置", text)
         self.assertIn("OpenClaw Feishu Bot", text)
+        self.assertIn("系统级 python3.11 缺失，但 repo 内 runtime 已就绪", text)
 
 
 if __name__ == "__main__":
