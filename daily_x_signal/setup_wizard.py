@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -255,6 +256,9 @@ def run_setup(
         return 1
 
     save_yaml(target_config_path, final_override)
+    heartbeat_path: Path | None = None
+    if host_mode == "openclaw":
+        heartbeat_path = sync_openclaw_heartbeat(Path.cwd(), target_config_path, final_override)
     print_section("完成")
     next_rows = [
         ["验证 following", f"./scripts/run_cli.sh sync-authors --override-config {target_config_path}"],
@@ -265,6 +269,8 @@ def run_setup(
         next_rows.append(["查看帖子追踪表", bitable_app_url({"outputs": {"feishu_bitable": final_override.get("outputs", {}).get("feishu_bitable", {})}}) or ""])
     if host_mode == "openclaw":
         next_rows.append(["OpenClaw HEARTBEAT", f"./scripts/run_cli.sh schedule-tick --override-config {target_config_path}"])
+        if heartbeat_path is not None:
+            next_rows.append(["HEARTBEAT File", str(heartbeat_path)])
     print(render_table(["Next Step", "Command"], next_rows))
     if post_write_generate is not None:
         print_section("首版日报预览")
@@ -390,32 +396,75 @@ def _ensure_xreach_ready(client: XReachClient) -> XReachClient:
     )
     if not install_result["ok"]:
         return client
-    return XReachClient(binary="xreach", workdir=client.workdir, proxy=client.proxy)
+    return XReachClient(binary=str(install_result.get("binary_path") or "xreach"), workdir=client.workdir, proxy=client.proxy)
 
 
 def _install_xreach_cli(npm_binary: str) -> dict[str, Any]:
+    install_env = _clean_dead_proxy_env(os.environ.copy())
     try:
         proc = subprocess.run(
             [npm_binary, "install", "-g", "xreach-cli"],
             cwd=Path.cwd(),
             capture_output=True,
             text=True,
+            env=install_env,
         )
     except OSError as exc:
-        return {"ok": False, "detail": f"无法执行 npm install -g xreach-cli：{exc.strerror or exc}"}
+        return {"ok": False, "detail": f"无法执行 npm install -g xreach-cli：{exc.strerror or exc}", "binary_path": None}
 
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip().splitlines()
         first_line = detail[0] if detail else "npm install -g xreach-cli 失败"
-        return {"ok": False, "detail": first_line}
+        return {"ok": False, "detail": first_line, "binary_path": None}
 
+    binary_path = _resolve_xreach_binary_after_install(npm_binary, install_env)
+    if binary_path:
+        return {"ok": True, "detail": f"已安装：{binary_path}", "binary_path": str(binary_path)}
+    return {
+        "ok": False,
+        "detail": "xreach-cli 已安装，但未找到 xreach 可执行文件；请确认 npm 全局 bin 已加入 PATH。",
+        "binary_path": None,
+    }
+
+
+def _clean_dead_proxy_env(env: dict[str, str]) -> dict[str, str]:
+    cleaned = dict(env)
+    for key in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        value = cleaned.get(key, "").strip()
+        if not value:
+            continue
+        proxy_ok, _detail = _probe_proxy_url(value)
+        if not proxy_ok:
+            cleaned.pop(key, None)
+    return cleaned
+
+
+def _resolve_xreach_binary_after_install(npm_binary: str, env: dict[str, str]) -> Path | None:
     resolved = shutil.which("xreach")
     if resolved:
-        return {"ok": True, "detail": f"已安装：{resolved}"}
+        return Path(resolved)
     fallback = Path.home() / ".npm-global" / "bin" / "xreach"
     if fallback.exists():
-        return {"ok": True, "detail": f"已安装：{fallback}"}
-    return {"ok": True, "detail": "安装完成；若当前 shell 还找不到 xreach，请确认 npm 全局 bin 已加入 PATH。"}
+        return fallback
+    try:
+        proc = subprocess.run(
+            [npm_binary, "prefix", "-g"],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    prefix = proc.stdout.strip()
+    if not prefix:
+        return None
+    candidate = Path(prefix) / "bin" / "xreach"
+    if candidate.exists():
+        return candidate
+    return None
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -496,6 +545,50 @@ def _save_following_cache(path: Path, authors: list[Any], status: dict[str, Any]
             "status": status,
             "authors": [author.raw for author in authors],
         },
+    )
+
+
+def sync_openclaw_heartbeat(project_root: Path, target_config_path: Path, config: dict[str, Any]) -> Path:
+    heartbeat_path = Path.home() / ".openclaw" / "workspace" / "HEARTBEAT.md"
+    heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_text = heartbeat_path.read_text(encoding="utf-8") if heartbeat_path.exists() else "# OpenClaw HEARTBEAT\n\n"
+    section = _build_openclaw_heartbeat_section(project_root, target_config_path, config)
+    start_marker = "<!-- daily-x-signal:start -->"
+    end_marker = "<!-- daily-x-signal:end -->"
+    wrapped_section = f"{start_marker}\n{section}\n{end_marker}\n"
+    if start_marker in existing_text and end_marker in existing_text:
+        before, _sep, remainder = existing_text.partition(start_marker)
+        _old, _sep2, after = remainder.partition(end_marker)
+        updated_text = f"{before}{wrapped_section}{after.lstrip()}"
+    else:
+        updated_text = existing_text.rstrip() + "\n\n" + wrapped_section
+    heartbeat_path.write_text(updated_text, encoding="utf-8")
+    return heartbeat_path
+
+
+def _build_openclaw_heartbeat_section(project_root: Path, target_config_path: Path, config: dict[str, Any]) -> str:
+    push_time = _format_push_time(config)
+    resolved_config_path = target_config_path if target_config_path.is_absolute() else (project_root / target_config_path).resolve()
+    run_command = (
+        f"cd {shlex.quote(str(project_root))} && "
+        f"./scripts/run_cli.sh schedule-tick --override-config {shlex.quote(str(resolved_config_path))}"
+    )
+    return "\n".join(
+        [
+            "## X 日报",
+            "",
+            f"**触发时间**：每天 {push_time}（Asia/Shanghai）",
+            "",
+            "### 执行步骤",
+            "",
+            "**Step 1 — 运行日报调度检查**",
+            "```bash",
+            run_command,
+            "```",
+            "",
+            "**Step 2 — 发送结果**",
+            "如果命中调度窗口，则由 daily-x-signal 生成日报，并优先通过 OpenClaw 绑定的 Feishu Bot 发送卡片；如果启用了帖子追踪表，也会同步写入。",
+        ]
     )
 
 
@@ -599,8 +692,9 @@ def _ask_form(prompt: str, defaults: dict[str, str]) -> dict[str, str]:
 def _collect_access_form(existing_handle: str, existing_user_id: str, existing_proxy_url: str, reuse_existing: bool) -> tuple[str, str, str]:
     print_section("访问配置")
     if reuse_existing and existing_handle:
-        print(render_table(["Field", "Status"], [["已有配置", "检测到旧版配置，默认沿用当前 X 访问配置"], ["viewer_handle", _mask_value(existing_handle)]]))
-        return existing_handle, existing_user_id, existing_proxy_url
+        print(render_table(["Field", "Status"], [["已有配置", "检测到旧版配置"], ["viewer_handle", _mask_value(existing_handle)]]))
+        if _ask_yes_no("是否沿用当前 X 访问配置", True):
+            return existing_handle, existing_user_id, existing_proxy_url
     if existing_handle or existing_user_id or existing_proxy_url:
         print(
             render_table(

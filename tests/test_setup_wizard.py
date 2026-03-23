@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from daily_x_signal.setup_wizard import (
+    _build_openclaw_heartbeat_section,
+    _clean_dead_proxy_env,
+    _collect_access_form,
     _default_output_choice_for_host_mode,
     _default_existing_user_outputs_for_host_mode,
     _current_host_mode,
@@ -28,6 +32,7 @@ from daily_x_signal.setup_wizard import (
     _viewer_config_status,
     collect_setup_checks,
     load_env_file,
+    sync_openclaw_heartbeat,
 )
 from daily_x_signal.x_client import XReachClient
 
@@ -48,6 +53,16 @@ class SetupWizardTests(unittest.TestCase):
     def test_normalize_x_handle_accepts_profile_url(self) -> None:
         self.assertEqual(_normalize_x_handle("https://x.com/sama"), "sama")
         self.assertEqual(_normalize_x_handle("@karpathy"), "karpathy")
+
+    def test_collect_access_form_allows_existing_user_to_edit(self) -> None:
+        with patch("daily_x_signal.setup_wizard._ask_yes_no", return_value=False), patch(
+            "daily_x_signal.setup_wizard._ask",
+            return_value="new-handle",
+        ):
+            handle, user_id, proxy_url = _collect_access_form("old-handle", "123", "http://127.0.0.1:7890", True)
+        self.assertEqual(handle, "new-handle")
+        self.assertEqual(user_id, "123")
+        self.assertEqual(proxy_url, "http://127.0.0.1:7890")
 
     def test_parse_form_lines_supports_batch_form(self) -> None:
         values = _parse_form_lines(["topics=1,2,4", "extra_keywords=paper, benchmark", "include_replies=no"])
@@ -197,6 +212,7 @@ class SetupWizardTests(unittest.TestCase):
             result = _install_xreach_cli("/opt/homebrew/bin/npm")
         self.assertTrue(result["ok"])
         self.assertIn("xreach", result["detail"])
+        self.assertEqual(result["binary_path"], "/opt/homebrew/bin/xreach")
 
     def test_ensure_xreach_ready_installs_when_missing(self) -> None:
         client = XReachClient(binary="xreach", workdir=".")
@@ -208,6 +224,40 @@ class SetupWizardTests(unittest.TestCase):
         ):
             ready = _ensure_xreach_ready(client)
         self.assertIsInstance(ready, XReachClient)
+        self.assertEqual(ready.binary, "/opt/homebrew/bin/xreach")
+
+    def test_clean_dead_proxy_env_removes_dead_loopback_proxy(self) -> None:
+        env = {"http_proxy": "http://127.0.0.1:65535", "https_proxy": "http://example.com:8080"}
+        cleaned = _clean_dead_proxy_env(env)
+        self.assertNotIn("http_proxy", cleaned)
+        self.assertEqual(cleaned["https_proxy"], "http://example.com:8080")
+
+    def test_build_and_sync_openclaw_heartbeat(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo root"
+            project_root.mkdir(parents=True, exist_ok=True)
+            section = _build_openclaw_heartbeat_section(
+                project_root,
+                Path("config/local.yaml"),
+                {"scheduler": {"trigger_hour": 8, "trigger_minute": 30}},
+            )
+            self.assertIn("## X 日报", section)
+            self.assertIn("./scripts/run_cli.sh schedule-tick", section)
+            self.assertIn(str(project_root.name), section)
+
+            heartbeat_home = Path(tmpdir) / "home"
+            with patch("daily_x_signal.setup_wizard.Path.home", return_value=heartbeat_home):
+                heartbeat_path = sync_openclaw_heartbeat(
+                    project_root,
+                    Path("config/local.yaml"),
+                    {"scheduler": {"trigger_hour": 8, "trigger_minute": 30}},
+                )
+            self.assertTrue(heartbeat_path.exists())
+            heartbeat_text = heartbeat_path.read_text(encoding="utf-8")
+            self.assertIn("<!-- daily-x-signal:start -->", heartbeat_text)
+            self.assertIn("## X 日报", heartbeat_text)
 
     def test_topic_choices_include_directional_copy_and_seed_terms(self) -> None:
         config = {

@@ -1,6 +1,6 @@
 ---
 name: daily-x-signal
-version: "2026.03.22.7"
+version: "2026.03.23.1"
 description: 从关注的 X 账号中生成高信号中文日报，并优先通过 CLI setup 完成引导式配置，再生成过去 24 小时或调度窗口内的日报。用户提到 X/Twitter 日报、过去 24 小时动态、重点帖子排序、今日必读、飞书卡片、帖子追踪表、首次配置日报机器人时，都应使用这个 skill，尤其是在 OpenClaw 远端环境中。
 metadata:
   trigger-hint: 当用户想配置或生成 X 日报、检查 daily-x-signal 是否可运行、补齐飞书和 xreach 环境、查看过去 24 小时值得看的帖子时使用。
@@ -85,7 +85,7 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 npm install -g xreach-cli
 ```
 
-用户同意时，可以在配置过程中顺手安装，不需要让用户离开当前 setup 流程。
+用户同意时，可以在配置过程中顺手安装，不需要让用户离开当前 setup 流程。安装前先检查并清理失效的本地代理环境变量，避免 `npm install -g xreach-cli` 被死代理卡住。
 
 ## 缺失清单输出格式
 
@@ -170,6 +170,8 @@ output=card_and_table
 
 - OpenClaw 绑定的 Feishu Bot
 - OpenClaw HEARTBEAT -> `./scripts/run_cli.sh schedule-tick --override-config config/local.yaml`
+
+setup 写入成功后，应把这条 HEARTBEAT 任务同步到 `~/.openclaw/workspace/HEARTBEAT.md`，而不是只在终端里打印命令。
 
 不要默认要求用户继续维护一套独立的 GitHub 定时兜底，除非用户明确要保留双保险。
 
