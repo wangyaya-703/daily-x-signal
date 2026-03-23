@@ -6,7 +6,7 @@ from typing import Any
 
 import requests
 
-from .feishu_bitable import upsert_feishu_bitable
+from .feishu_bitable import bitable_app_url, upsert_feishu_bitable
 from .models import Report
 from .store import save_json
 
@@ -65,6 +65,24 @@ def build_feishu_card(report: Report, config: dict[str, Any]) -> dict[str, Any]:
         elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": "**👀 建议额外关注**"}])
         for item in report.watchlist_authors[:5]:
             elements.append({"tag": "markdown", "content": f"- @{item.get('handle', '')}：{item.get('reason', '')}"})
+    tracker_url = bitable_app_url(config)
+    if tracker_url and bool(config.get("outputs", {}).get("feishu_bitable", {}).get("enabled", False)):
+        elements.extend(
+            [
+                {"tag": "hr"},
+                {
+                    "tag": "action",
+                    "actions": [
+                        {
+                            "tag": "button",
+                            "text": {"tag": "plain_text", "content": "查看帖子追踪表"},
+                            "type": "primary",
+                            "url": tracker_url,
+                        }
+                    ],
+                },
+            ]
+        )
     if config["outputs"]["feishu"].get("mention_all", False):
         elements.append({"tag": "markdown", "content": "<at id=all></at>"})
 
