@@ -19,13 +19,13 @@ user-invocable: true
   - `daily-x-signal` 自己负责飞书直推、内部调度和 GitHub fallback
 - `openclaw`
   - 优先复用 OpenClaw 已绑定的 Feishu Bot
-  - 优先用 OpenClaw 的 HEARTBEAT 定时触发 `daily-x-signal schedule-tick`
+  - 优先用 OpenClaw 的 HEARTBEAT 定时触发 `./scripts/run_cli.sh schedule-tick`
   - 不再把 GitHub fallback 当成主调度路径
 
 这个 skill 在 OpenClaw 里应该优先做两件事：
 
 1. 判断当前环境是否已经可运行。
-2. 如果还不能运行，明确告诉用户缺什么，并优先引导走 `daily-x-signal setup`。
+2. 如果还不能运行，明确告诉用户缺什么，并优先引导走 `./scripts/run_cli.sh setup`。
 
 不要在依赖缺失时硬生成结果，更不要编造日报内容。
 
@@ -288,8 +288,8 @@ xreach auth set --auth-token '你的_auth_token' --ct0 '你的_ct0'
 
 一次成功的交付至少应满足：
 
-1. `daily-x-signal setup` 已跑通，或已有有效 `config/local.yaml`
+1. `./scripts/run_cli.sh setup` 已跑通，或已有有效 `config/local.yaml`
 2. `xreach auth check` 通过
-3. `daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml` 成功
+3. `./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml` 成功
 4. 飞书卡片成功发送，或至少本地输出成功并明确告知飞书缺失项
 5. 帖子追踪表成功写入或明确说明 why not

@@ -102,10 +102,10 @@ def sync_following(client: XReachClient, config: dict[str, Any]) -> dict[str, An
             "viewer_profile": None,
         }
     try:
-        if handle:
-            payload = client.following(handle, max_pages=max_pages, count=50)
-        else:
+        if user_id:
             payload = client.following_by_user_id(user_id, max_pages=max_pages, count=50)
+        else:
+            payload = client.following(handle, max_pages=max_pages, count=50)
         items = payload.get("items", [])
         viewer_profile = collect_viewer_profile(client, config)
     except XReachError as exc:

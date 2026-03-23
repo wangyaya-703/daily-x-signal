@@ -84,17 +84,19 @@ git clone https://github.com/wangyaya-703/daily-x-signal.git
 cd daily-x-signal
 python3.11 -m pip install -e .
 
-daily-x-signal setup
-daily-x-signal generate
-daily-x-signal generate --window-mode rolling_24h
-daily-x-signal show-core-authors
+./scripts/run_cli.sh setup
+./scripts/run_cli.sh generate
+./scripts/run_cli.sh generate --window-mode rolling_24h
+./scripts/run_cli.sh show-core-authors
 ```
 
 如果你是在 OpenClaw 远端环境里运行，优先用仓库自带的入口，避免 PATH 不一致：
 
 ```bash
 ./scripts/run_cli.sh setup
+./scripts/run_cli.sh sync-authors --override-config config/local.yaml
 ./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml
+./scripts/run_cli.sh schedule-tick --override-config config/local.yaml
 ```
 
 ## 配置方式
@@ -116,7 +118,7 @@ cp config/local.example.yaml config/local.yaml
 如果你不想手写 YAML，优先使用：
 
 ```bash
-daily-x-signal setup
+./scripts/run_cli.sh setup
 ```
 
 这个向导会按步骤检查：
@@ -196,13 +198,13 @@ outputs:
 
 ```bash
 xreach auth check
-daily-x-signal sync-authors --override-config config/local.yaml
+./scripts/run_cli.sh sync-authors --override-config config/local.yaml
 ```
 
 ### 2. 验证 LLM
 
 ```bash
-daily-x-signal generate --window-mode rolling_24h --top-n 10 --override-config config/local.yaml
+./scripts/run_cli.sh generate --window-mode rolling_24h --top-n 10 --override-config config/local.yaml
 ```
 
 生成后检查：
@@ -243,31 +245,31 @@ daily-x-signal generate --window-mode rolling_24h --top-n 10 --override-config c
 生成固定窗口日报：
 
 ```bash
-daily-x-signal generate --override-config config/local.yaml
+./scripts/run_cli.sh generate --override-config config/local.yaml
 ```
 
 调度补偿检查：
 
 ```bash
-daily-x-signal schedule-tick --override-config config/local.yaml
+./scripts/run_cli.sh schedule-tick --override-config config/local.yaml
 ```
 
 生成过去 24 小时报：
 
 ```bash
-daily-x-signal generate --window-mode rolling_24h --override-config config/local.yaml
+./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml
 ```
 
 查看重点作者池：
 
 ```bash
-daily-x-signal show-core-authors
+./scripts/run_cli.sh show-core-authors
 ```
 
 同步关注列表：
 
 ```bash
-daily-x-signal sync-authors --override-config config/local.yaml
+./scripts/run_cli.sh sync-authors --override-config config/local.yaml
 ```
 
 这个命令会输出以下关键信息：
@@ -280,7 +282,7 @@ daily-x-signal sync-authors --override-config config/local.yaml
 交互式引导配置：
 
 ```bash
-daily-x-signal setup --override-config config/local.yaml
+./scripts/run_cli.sh setup --override-config config/local.yaml
 ```
 
 ## launchd 生产调度
@@ -297,7 +299,7 @@ daily-x-signal setup --override-config config/local.yaml
 
 - GitHub Actions 会在上海时间 `08:35` 到 `11:35` 之间每小时检查一次
 - 如果本地主链路已经成功发送，会直接跳过
-- 如果本地主链路失败，会复用 `daily-x-signal schedule-tick --force` 做兜底补发
+- 如果本地主链路失败，会复用 `./scripts/run_cli.sh schedule-tick --force --override-config config/local.yaml` 做兜底补发
 
 安装方式：
 

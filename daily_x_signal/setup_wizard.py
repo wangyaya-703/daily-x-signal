@@ -120,11 +120,12 @@ def run_setup(
         print(render_table(["Status", "Reason"], [["WARN", "缺少 X 认证或 X 账号配置，跳过同步。"]]))
 
     if _should_offer_access_retry(following_status, viewer_user_id, proxy_url):
-        viewer_user_id, proxy_url = _collect_access_fallback(viewer_user_id, proxy_url)
+        viewer_handle, viewer_user_id, proxy_url = _collect_access_fallback(viewer_handle, viewer_user_id, proxy_url)
+        if viewer_handle:
+            config.setdefault("x", {})["viewer_handle"] = viewer_handle
         if viewer_user_id:
             config.setdefault("x", {})["viewer_user_id"] = viewer_user_id
-        if proxy_url:
-            config.setdefault("x", {})["proxy_url"] = proxy_url
+        config.setdefault("x", {})["proxy_url"] = proxy_url or None
         client = XReachClient(binary=client.binary, workdir=client.workdir, proxy=proxy_url or None)
         checks = collect_setup_checks(config, client, dotenv_values)
         print_section("补充访问配置后检查")
@@ -259,6 +260,8 @@ def run_setup(
     heartbeat_path: Path | None = None
     if host_mode == "openclaw":
         heartbeat_path = sync_openclaw_heartbeat(Path.cwd(), target_config_path, final_override)
+    else:
+        remove_openclaw_heartbeat()
     print_section("完成")
     next_rows = [
         ["验证 following", f"./scripts/run_cli.sh sync-authors --override-config {target_config_path}"],
@@ -553,8 +556,8 @@ def sync_openclaw_heartbeat(project_root: Path, target_config_path: Path, config
     heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
     existing_text = heartbeat_path.read_text(encoding="utf-8") if heartbeat_path.exists() else "# OpenClaw HEARTBEAT\n\n"
     section = _build_openclaw_heartbeat_section(project_root, target_config_path, config)
-    start_marker = "<!-- daily-x-signal:start -->"
-    end_marker = "<!-- daily-x-signal:end -->"
+    start_marker = _openclaw_heartbeat_start_marker()
+    end_marker = _openclaw_heartbeat_end_marker()
     wrapped_section = f"{start_marker}\n{section}\n{end_marker}\n"
     if start_marker in existing_text and end_marker in existing_text:
         before, _sep, remainder = existing_text.partition(start_marker)
@@ -564,6 +567,30 @@ def sync_openclaw_heartbeat(project_root: Path, target_config_path: Path, config
         updated_text = existing_text.rstrip() + "\n\n" + wrapped_section
     heartbeat_path.write_text(updated_text, encoding="utf-8")
     return heartbeat_path
+
+
+def remove_openclaw_heartbeat() -> Path | None:
+    heartbeat_path = Path.home() / ".openclaw" / "workspace" / "HEARTBEAT.md"
+    if not heartbeat_path.exists():
+        return None
+    start_marker = _openclaw_heartbeat_start_marker()
+    end_marker = _openclaw_heartbeat_end_marker()
+    existing_text = heartbeat_path.read_text(encoding="utf-8")
+    if start_marker not in existing_text or end_marker not in existing_text:
+        return heartbeat_path
+    before, _sep, remainder = existing_text.partition(start_marker)
+    _old, _sep2, after = remainder.partition(end_marker)
+    updated_text = (before.rstrip() + "\n\n" + after.lstrip()).strip()
+    heartbeat_path.write_text((updated_text + "\n") if updated_text else "", encoding="utf-8")
+    return heartbeat_path
+
+
+def _openclaw_heartbeat_start_marker() -> str:
+    return "<!-- daily-x-signal:start -->"
+
+
+def _openclaw_heartbeat_end_marker() -> str:
+    return "<!-- daily-x-signal:end -->"
 
 
 def _build_openclaw_heartbeat_section(project_root: Path, target_config_path: Path, config: dict[str, Any]) -> str:
@@ -723,12 +750,13 @@ def _collect_access_form(existing_handle: str, existing_user_id: str, existing_p
     return viewer_handle, existing_user_id, existing_proxy_url
 
 
-def _collect_access_fallback(existing_user_id: str, existing_proxy_url: str) -> tuple[str, str]:
+def _collect_access_fallback(existing_handle: str, existing_user_id: str, existing_proxy_url: str) -> tuple[str, str, str]:
     print_section("补充访问配置")
     print(
         render_table(
             ["Field", "How to fill"],
             [
+                ["viewer_handle", "如果你怀疑 handle 填错了，可以在这里直接改。"],
                 ["viewer_user_id", "可留空；只有 handle 路径不稳定时再补。"],
                 ["proxy_url", "可留空；远端访问 X 不稳定时再填，例如 http://127.0.0.1:7890。"],
             ],
@@ -737,11 +765,16 @@ def _collect_access_fallback(existing_user_id: str, existing_proxy_url: str) -> 
     form_values = _ask_form(
         "following 同步看起来不稳定。若你知道 user id 或代理地址，可在这里一次性补充；直接回车则跳过。",
         {
+            "viewer_handle": existing_handle,
             "viewer_user_id": existing_user_id,
             "proxy_url": existing_proxy_url,
         },
     )
-    return form_values["viewer_user_id"].strip(), form_values["proxy_url"].strip()
+    return (
+        _normalize_x_handle(form_values["viewer_handle"].strip()),
+        form_values["viewer_user_id"].strip(),
+        form_values["proxy_url"].strip(),
+    )
 
 
 def _normalize_x_handle(value: str) -> str:

@@ -8,6 +8,7 @@ from daily_x_signal.setup_wizard import (
     _build_openclaw_heartbeat_section,
     _clean_dead_proxy_env,
     _collect_access_form,
+    _collect_access_fallback,
     _default_output_choice_for_host_mode,
     _default_existing_user_outputs_for_host_mode,
     _current_host_mode,
@@ -32,6 +33,7 @@ from daily_x_signal.setup_wizard import (
     _viewer_config_status,
     collect_setup_checks,
     load_env_file,
+    remove_openclaw_heartbeat,
     sync_openclaw_heartbeat,
 )
 from daily_x_signal.x_client import XReachClient
@@ -62,6 +64,20 @@ class SetupWizardTests(unittest.TestCase):
             handle, user_id, proxy_url = _collect_access_form("old-handle", "123", "http://127.0.0.1:7890", True)
         self.assertEqual(handle, "new-handle")
         self.assertEqual(user_id, "123")
+        self.assertEqual(proxy_url, "http://127.0.0.1:7890")
+
+    def test_collect_access_fallback_allows_handle_fix(self) -> None:
+        with patch(
+            "daily_x_signal.setup_wizard._ask_form",
+            return_value={
+                "viewer_handle": "https://x.com/new-handle",
+                "viewer_user_id": "456",
+                "proxy_url": "http://127.0.0.1:7890",
+            },
+        ):
+            handle, user_id, proxy_url = _collect_access_fallback("old-handle", "123", "")
+        self.assertEqual(handle, "new-handle")
+        self.assertEqual(user_id, "456")
         self.assertEqual(proxy_url, "http://127.0.0.1:7890")
 
     def test_parse_form_lines_supports_batch_form(self) -> None:
@@ -258,6 +274,27 @@ class SetupWizardTests(unittest.TestCase):
             heartbeat_text = heartbeat_path.read_text(encoding="utf-8")
             self.assertIn("<!-- daily-x-signal:start -->", heartbeat_text)
             self.assertIn("## X 日报", heartbeat_text)
+
+    def test_remove_openclaw_heartbeat_only_clears_daily_x_signal_section(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            heartbeat_home = Path(tmpdir) / "home"
+            heartbeat_path = heartbeat_home / ".openclaw" / "workspace" / "HEARTBEAT.md"
+            heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+            heartbeat_path.write_text(
+                "# OpenClaw HEARTBEAT\n\n"
+                "## 其他任务\n\n"
+                "<!-- daily-x-signal:start -->\n"
+                "## X 日报\n"
+                "<!-- daily-x-signal:end -->\n",
+                encoding="utf-8",
+            )
+            with patch("daily_x_signal.setup_wizard.Path.home", return_value=heartbeat_home):
+                remove_openclaw_heartbeat()
+            heartbeat_text = heartbeat_path.read_text(encoding="utf-8")
+            self.assertIn("## 其他任务", heartbeat_text)
+            self.assertNotIn("## X 日报", heartbeat_text)
 
     def test_topic_choices_include_directional_copy_and_seed_terms(self) -> None:
         config = {

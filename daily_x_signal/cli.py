@@ -58,6 +58,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_client(config: dict | None = None) -> XReachClient:
+    proxy_url = ""
+    if config:
+        proxy_url = str(config.get("x", {}).get("proxy_url") or "").strip()
+    return XReachClient(workdir=Path.cwd(), proxy=proxy_url or None)
+
+
 def cmd_sync_authors(config: dict, client: XReachClient) -> int:
     sync_result = sync_following(client, config)
     authors = sync_result["authors"]
@@ -653,20 +660,20 @@ def main() -> int:
                 dry_run=False,
                 force=False,
             )
-            result = generate_digest(preview_args, preview_config, XReachClient(workdir=Path.cwd()))
+            result = generate_digest(preview_args, preview_config, build_client(preview_config))
             return print_generate_result(result, preview_config)
 
         return run_setup(
             base_config_path=Path(args.config),
             target_config_path=target_config,
-            client=XReachClient(workdir=Path.cwd()),
+            client=build_client(),
             history_path=STATE_PATH,
             following_cache_path=FOLLOWING_CACHE_PATH,
             post_write_generate=_post_write_generate,
         )
     base_config = AppConfig.load(args.config)
     config = base_config.merged_with(args.override_config).raw
-    client = XReachClient(workdir=Path.cwd())
+    client = build_client(config)
     if args.command == "sync-authors":
         return cmd_sync_authors(config, client)
     if args.command == "show-core-authors":
