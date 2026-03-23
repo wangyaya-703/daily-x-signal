@@ -742,6 +742,68 @@ def _ask_form(prompt: str, defaults: dict[str, str]) -> dict[str, str]:
     return values
 
 
+def _normalize_literal_choice(value: str, options: list[str], default: str) -> str:
+    cleaned = value.strip()
+    return cleaned if cleaned in options else default
+
+
+def _parse_preference_form(
+    form_values: dict[str, str],
+    *,
+    topic_choices: list[tuple[str, str, float, str, str]],
+    interest_profile: dict[str, Any],
+    existing_keywords: list[str],
+    existing_disliked_keywords: list[str],
+    default_topic_selection: str,
+    default_host_mode: str,
+    default_push_time: str,
+    default_expected_following_count: str,
+    default_following_confirmed: bool,
+    default_style_choice: str,
+    default_output_choice: str,
+    feishu_default: bool,
+    existing_bitable_enabled: bool,
+    bitable_ready: bool,
+) -> dict[str, Any]:
+    host_mode = _normalize_literal_choice(form_values.get("host_mode", ""), ["standalone", "openclaw"], default_host_mode)
+    topic_selection = form_values.get("topics", "").strip() or default_topic_selection
+    push_time = form_values.get("push_time", "").strip() or default_push_time
+    if _parse_time_hhmm(push_time) is None:
+        push_time = default_push_time
+    style_choice = _normalize_literal_choice(form_values.get("style", ""), list(STYLE_PRESETS.keys()), default_style_choice)
+    output_choice = _normalize_literal_choice(
+        form_values.get("output", ""),
+        ["keep", "local_only", "card_only", "card_and_table"],
+        default_output_choice,
+    )
+    expected_following_count = form_values.get("expected_following_count", "").strip() or default_expected_following_count
+    following_confirmed = _parse_yes_no(form_values.get("following_confirmed", ""), default_following_confirmed)
+    selected_topics = _select_topics(topic_choices, topic_selection)
+    extra_keywords = _split_csv(form_values.get("extra_keywords", ""))
+    remove_keywords = {item.lower() for item in _split_csv(form_values.get("remove_keywords", ""))}
+    disliked_keywords = _dedupe([*existing_disliked_keywords, *_split_csv(form_values.get("disliked_keywords", ""))])
+    recommended_keywords = _build_recommended_keywords(interest_profile, selected_topics, existing_keywords)
+    final_keywords = [keyword for keyword in _dedupe([*recommended_keywords, *extra_keywords]) if keyword.lower() not in remove_keywords]
+    style = STYLE_PRESETS[style_choice]
+    enable_feishu, enable_bitable = _resolve_output_choice(output_choice, feishu_default, existing_bitable_enabled, bitable_ready)
+    return {
+        "host_mode": host_mode,
+        "selected_topics": selected_topics,
+        "final_keywords": final_keywords,
+        "disliked_keywords": disliked_keywords,
+        "expected_following_count": expected_following_count,
+        "following_confirmed": following_confirmed,
+        "push_time": push_time,
+        "default_mode": style["default_mode"],
+        "digest_top_n": int(style["digest_top_n"]),
+        "include_replies": bool(style["include_replies"]),
+        "reply_like_threshold": int(style["reply_like_threshold"]),
+        "enable_feishu": enable_feishu,
+        "enable_bitable": enable_bitable,
+        "bitable_ready": bitable_ready,
+    }
+
+
 def _collect_access_form(existing_handle: str, existing_user_id: str, existing_proxy_url: str, reuse_existing: bool) -> tuple[str, str, str]:
     print_section("访问配置")
     if reuse_existing and existing_handle:
@@ -890,34 +952,56 @@ def _collect_preference_choices(
                 ["Field", "Default", "How to fill"],
                 [
                     ["host_mode", current_host_mode, "standalone=自己推送；openclaw=复用 OpenClaw Bot + HEARTBEAT。"],
-                    ["topics", default_topic_selection, "只需要确认推荐方向编号；留空采用推荐组合。"],
-                    ["extra_keywords", "", "如果你想额外追踪论文、bench、产品名，再补少量关键词。"],
+                    ["topics", default_topic_selection, "填写关注方向编号，例如 1,2,4；留空采用推荐组合。"],
+                    ["extra_keywords", "", "额外追踪少量词，例如 paper, benchmark, release。"],
+                    ["remove_keywords", "", "如果你想从推荐词里删掉一些词，在这里写。"],
                     ["push_time", current_push_time, "日报推送时间，格式 HH:MM。"],
                 ],
             )
         )
         print(render_table(["Default Keyword Write"], [[", ".join(recommended_keyword_write) or "暂无建议"]]))
-        host_mode = _ask_choice("选择运行宿主", ["standalone", "openclaw"], current_host_mode)
-        topic_selection = _ask("选择关注方向编号（留空采用推荐组合）", default_topic_selection)
-        extra_keywords = _split_csv(_ask("补充少量关键词（可留空）", ""))
-        push_time = _ask("设置日报推送时间（HH:MM）", current_push_time)
-        selected_topics = _select_topics(topic_choices, topic_selection)
-        final_keywords = _dedupe([*_build_recommended_keywords(interest_profile, selected_topics, existing_keywords), *extra_keywords])
+        form_values = _ask_form(
+            "请一次性确认这些偏好；直接回车会沿用默认值。",
+            {
+                "host_mode": current_host_mode,
+                "topics": default_topic_selection,
+                "extra_keywords": "",
+                "remove_keywords": "",
+                "push_time": current_push_time,
+            },
+        )
+        parsed = _parse_preference_form(
+            form_values,
+            topic_choices=topic_choices,
+            interest_profile=interest_profile,
+            existing_keywords=existing_keywords,
+            existing_disliked_keywords=existing_disliked_keywords,
+            default_topic_selection=default_topic_selection,
+            default_host_mode=current_host_mode,
+            default_push_time=current_push_time,
+            default_expected_following_count=expected_default,
+            default_following_confirmed=confirmed_default,
+            default_style_choice=_infer_style_choice(current_mode, current_top_n, current_include_replies, current_reply_threshold),
+            default_output_choice="keep",
+            feishu_default=feishu_default,
+            existing_bitable_enabled=existing_bitable_enabled,
+            bitable_ready=bitable_ready,
+        )
         enable_feishu, enable_bitable = _default_existing_user_outputs_for_host_mode(
-            host_mode,
+            parsed["host_mode"],
             feishu_default=feishu_default,
             bitable_enabled=existing_bitable_enabled,
             feishu_ready=_check_ok(checks, "feishu_app"),
             bitable_ready=bitable_ready,
         )
         return {
-            "host_mode": host_mode,
-            "selected_topics": selected_topics,
-            "final_keywords": final_keywords,
-            "disliked_keywords": existing_disliked_keywords,
-            "expected_following_count": expected_default,
-            "following_confirmed": confirmed_default,
-            "push_time": push_time,
+            "host_mode": parsed["host_mode"],
+            "selected_topics": parsed["selected_topics"],
+            "final_keywords": parsed["final_keywords"],
+            "disliked_keywords": parsed["disliked_keywords"],
+            "expected_following_count": parsed["expected_following_count"],
+            "following_confirmed": parsed["following_confirmed"],
+            "push_time": parsed["push_time"],
             "default_mode": current_mode,
             "digest_top_n": current_top_n,
             "include_replies": current_include_replies,
@@ -928,9 +1012,8 @@ def _collect_preference_choices(
         }
 
     style_choice = _infer_style_choice(current_mode, current_top_n, current_include_replies, current_reply_threshold)
-    host_mode = _ask_choice("选择运行宿主", ["standalone", "openclaw"], current_host_mode)
     output_choice = _default_output_choice_for_host_mode(
-        host_mode,
+        current_host_mode,
         feishu_default=feishu_default,
         bitable_enabled=existing_bitable_enabled,
         feishu_ready=_check_ok(checks, "feishu_app"),
@@ -966,36 +1049,55 @@ def _collect_preference_choices(
         )
     )
     print(render_table(["Schedule"], [[f"当前默认推送时间：{current_push_time}"]]))
+    form_defaults = {
+        "host_mode": current_host_mode,
+        "topics": default_topic_selection,
+        "extra_keywords": "",
+        "remove_keywords": "",
+        "push_time": current_push_time,
+        "style": style_choice,
+        "output": output_choice,
+    }
     if need_following_confirm:
         print(render_table(["Following"], [[f"当前同步到 {following_status.get('synced_count', 0)} 个关注对象；如果看起来合理，就确认这个总数。"]]))
-        expected_following_count = _ask("确认关注总数", expected_default)
-        following_confirmed = _ask_yes_no("是否确认这个关注总数", confirmed_default or bool(expected_following_count))
-    else:
-        expected_following_count = expected_default
-        following_confirmed = confirmed_default
-    selected_topics = _select_topics(topic_choices, _ask("选择关注方向编号（留空采用推荐组合）", default_topic_selection))
-    extra_keywords = _split_csv(_ask("补充少量关键词（可留空）", ""))
-    push_time = _ask("设置日报推送时间（HH:MM）", current_push_time)
-    style_choice = _ask_choice("选择阅读风格", list(STYLE_PRESETS.keys()), style_choice)
-    output_choice = _ask_choice("选择输出方式", ["keep", "local_only", "card_only", "card_and_table"], output_choice)
+        form_defaults["expected_following_count"] = expected_default
+        form_defaults["following_confirmed"] = "yes" if (confirmed_default or bool(expected_default)) else "no"
 
-    style = STYLE_PRESETS[style_choice]
-    final_keywords = _dedupe([*_build_recommended_keywords(interest_profile, selected_topics, existing_keywords), *extra_keywords])
-    enable_feishu, enable_bitable = _resolve_output_choice(output_choice, feishu_default, existing_bitable_enabled, bitable_ready)
+    form_values = _ask_form(
+        "请一次性填写偏好表单；直接回车会沿用默认值。",
+        form_defaults,
+    )
+    parsed = _parse_preference_form(
+        form_values,
+        topic_choices=topic_choices,
+        interest_profile=interest_profile,
+        existing_keywords=existing_keywords,
+        existing_disliked_keywords=existing_disliked_keywords,
+        default_topic_selection=default_topic_selection,
+        default_host_mode=current_host_mode,
+        default_push_time=current_push_time,
+        default_expected_following_count=expected_default,
+        default_following_confirmed=confirmed_default or bool(expected_default),
+        default_style_choice=style_choice,
+        default_output_choice=output_choice,
+        feishu_default=feishu_default,
+        existing_bitable_enabled=existing_bitable_enabled,
+        bitable_ready=bitable_ready,
+    )
     return {
-        "host_mode": host_mode,
-        "selected_topics": selected_topics,
-        "final_keywords": final_keywords,
-        "disliked_keywords": existing_disliked_keywords,
-        "expected_following_count": expected_following_count,
-        "following_confirmed": following_confirmed,
-        "push_time": push_time,
-        "default_mode": style["default_mode"],
-        "digest_top_n": int(style["digest_top_n"]),
-        "include_replies": bool(style["include_replies"]),
-        "reply_like_threshold": int(style["reply_like_threshold"]),
-        "enable_feishu": enable_feishu,
-        "enable_bitable": enable_bitable,
+        "host_mode": parsed["host_mode"],
+        "selected_topics": parsed["selected_topics"],
+        "final_keywords": parsed["final_keywords"],
+        "disliked_keywords": parsed["disliked_keywords"],
+        "expected_following_count": parsed["expected_following_count"],
+        "following_confirmed": parsed["following_confirmed"],
+        "push_time": parsed["push_time"],
+        "default_mode": parsed["default_mode"],
+        "digest_top_n": parsed["digest_top_n"],
+        "include_replies": parsed["include_replies"],
+        "reply_like_threshold": parsed["reply_like_threshold"],
+        "enable_feishu": parsed["enable_feishu"],
+        "enable_bitable": parsed["enable_bitable"],
         "bitable_ready": bitable_ready,
     }
 

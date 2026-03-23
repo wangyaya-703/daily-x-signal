@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from daily_x_signal.setup_wizard import (
     _build_openclaw_heartbeat_section,
+    _collect_preference_choices,
     _clean_dead_proxy_env,
     _collect_access_form,
     _collect_access_fallback,
@@ -92,6 +93,119 @@ class SetupWizardTests(unittest.TestCase):
         self.assertTrue(_parse_yes_no("yes", False))
         self.assertFalse(_parse_yes_no("no", True))
         self.assertTrue(_parse_yes_no("", True))
+
+    def test_collect_preference_choices_existing_user_uses_single_form(self) -> None:
+        config = {
+            "runtime": {"host_mode": "openclaw"},
+            "profile": {
+                "default_mode": "all_following",
+                "digest_top_n": 10,
+                "interest_keywords": ["agents"],
+                "disliked_keywords": ["meme"],
+            },
+            "x": {
+                "include_replies": True,
+                "reply_like_threshold": 100,
+                "following_count_confirmed": True,
+            },
+            "outputs": {
+                "feishu": {"enabled": True},
+                "feishu_bitable": {"enabled": True, "app_token": "app", "table_id": "tbl"},
+            },
+        }
+        checks = [{"key": "feishu_app", "ok": True}, {"key": "openclaw_feishu_bot", "ok": True}]
+        following_status = {"expected_following_count": 100, "synced_count": 100, "needs_confirmation": False}
+        topic_choices = [
+            ("ai_coding", "AI 编程 / Coding Agent / 工作流", 1.0, "reason", "agent, workflow"),
+            ("papers_algorithms", "模型研究 / 论文 / Benchmark", 0.9, "reason", "paper, benchmark"),
+        ]
+        interest_profile = {"keywords": ["agent", "workflow"]}
+
+        with patch(
+            "daily_x_signal.setup_wizard._ask_form",
+            return_value={
+                "host_mode": "openclaw",
+                "topics": "2",
+                "extra_keywords": "paper, release",
+                "remove_keywords": "agent",
+                "push_time": "09:30",
+            },
+        ), patch("daily_x_signal.setup_wizard._ask") as ask_mock, patch(
+            "daily_x_signal.setup_wizard._ask_choice"
+        ) as choice_mock:
+            result = _collect_preference_choices(config, checks, following_status, topic_choices, interest_profile, True)
+
+        ask_mock.assert_not_called()
+        choice_mock.assert_not_called()
+        self.assertEqual(result["host_mode"], "openclaw")
+        self.assertEqual(result["selected_topics"], ["papers_algorithms"])
+        self.assertIn("paper", result["final_keywords"])
+        self.assertIn("release", result["final_keywords"])
+        self.assertNotIn("agent", [item.lower() for item in result["final_keywords"]])
+        self.assertEqual(result["push_time"], "09:30")
+
+    def test_collect_preference_choices_new_user_uses_single_form(self) -> None:
+        config = {
+            "runtime": {"host_mode": "standalone"},
+            "profile": {
+                "default_mode": "all_following",
+                "digest_top_n": 10,
+                "interest_keywords": [],
+                "disliked_keywords": [],
+            },
+            "x": {
+                "include_replies": True,
+                "reply_like_threshold": 100,
+                "following_count_confirmed": False,
+            },
+            "outputs": {
+                "feishu": {"enabled": False},
+                "feishu_bitable": {"enabled": True, "app_token": "app", "table_id": "tbl"},
+            },
+        }
+        checks = [{"key": "feishu_app", "ok": True}, {"key": "openclaw_feishu_bot", "ok": False}]
+        following_status = {
+            "expected_following_count": 88,
+            "synced_count": 88,
+            "needs_confirmation": True,
+        }
+        topic_choices = [
+            ("ai_coding", "AI 编程 / Coding Agent / 工作流", 1.0, "reason", "agent, workflow"),
+            ("agent_frameworks", "Agent 框架 / 多智能体 / 编排", 0.8, "reason", "orchestration"),
+            ("papers_algorithms", "模型研究 / 论文 / Benchmark", 0.6, "reason", "paper, benchmark"),
+        ]
+        interest_profile = {"keywords": ["agent", "paper"]}
+
+        with patch(
+            "daily_x_signal.setup_wizard._ask_form",
+            return_value={
+                "host_mode": "standalone",
+                "expected_following_count": "88",
+                "following_confirmed": "yes",
+                "topics": "1,3",
+                "extra_keywords": "benchmark",
+                "remove_keywords": "",
+                "push_time": "08:45",
+                "style": "broad",
+                "output": "card_and_table",
+            },
+        ), patch("daily_x_signal.setup_wizard._ask") as ask_mock, patch(
+            "daily_x_signal.setup_wizard._ask_choice"
+        ) as choice_mock, patch("daily_x_signal.setup_wizard._ask_yes_no") as yes_no_mock:
+            result = _collect_preference_choices(config, checks, following_status, topic_choices, interest_profile, False)
+
+        ask_mock.assert_not_called()
+        choice_mock.assert_not_called()
+        yes_no_mock.assert_not_called()
+        self.assertEqual(result["selected_topics"], ["ai_coding", "papers_algorithms"])
+        self.assertEqual(result["push_time"], "08:45")
+        self.assertTrue(result["following_confirmed"])
+        self.assertEqual(result["default_mode"], "all_following")
+        self.assertEqual(result["digest_top_n"], 12)
+        self.assertTrue(result["include_replies"])
+        self.assertEqual(result["reply_like_threshold"], 60)
+        self.assertTrue(result["enable_feishu"])
+        self.assertTrue(result["enable_bitable"])
 
     def test_viewer_config_status_does_not_expose_raw_identity(self) -> None:
         detail = _viewer_config_status("wangtianyu", "31415926")
