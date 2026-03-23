@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -556,15 +557,12 @@ def sync_openclaw_heartbeat(project_root: Path, target_config_path: Path, config
     heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
     existing_text = heartbeat_path.read_text(encoding="utf-8") if heartbeat_path.exists() else "# OpenClaw HEARTBEAT\n\n"
     section = _build_openclaw_heartbeat_section(project_root, target_config_path, config)
+    existing_text = _remove_managed_openclaw_heartbeat_section(existing_text)
+    existing_text = _remove_conflicting_x_digest_sections(existing_text)
     start_marker = _openclaw_heartbeat_start_marker()
     end_marker = _openclaw_heartbeat_end_marker()
     wrapped_section = f"{start_marker}\n{section}\n{end_marker}\n"
-    if start_marker in existing_text and end_marker in existing_text:
-        before, _sep, remainder = existing_text.partition(start_marker)
-        _old, _sep2, after = remainder.partition(end_marker)
-        updated_text = f"{before}{wrapped_section}{after.lstrip()}"
-    else:
-        updated_text = existing_text.rstrip() + "\n\n" + wrapped_section
+    updated_text = existing_text.rstrip() + "\n\n" + wrapped_section
     heartbeat_path.write_text(updated_text, encoding="utf-8")
     return heartbeat_path
 
@@ -573,14 +571,8 @@ def remove_openclaw_heartbeat() -> Path | None:
     heartbeat_path = Path.home() / ".openclaw" / "workspace" / "HEARTBEAT.md"
     if not heartbeat_path.exists():
         return None
-    start_marker = _openclaw_heartbeat_start_marker()
-    end_marker = _openclaw_heartbeat_end_marker()
     existing_text = heartbeat_path.read_text(encoding="utf-8")
-    if start_marker not in existing_text or end_marker not in existing_text:
-        return heartbeat_path
-    before, _sep, remainder = existing_text.partition(start_marker)
-    _old, _sep2, after = remainder.partition(end_marker)
-    updated_text = (before.rstrip() + "\n\n" + after.lstrip()).strip()
+    updated_text = _remove_managed_openclaw_heartbeat_section(existing_text).strip()
     heartbeat_path.write_text((updated_text + "\n") if updated_text else "", encoding="utf-8")
     return heartbeat_path
 
@@ -591,6 +583,23 @@ def _openclaw_heartbeat_start_marker() -> str:
 
 def _openclaw_heartbeat_end_marker() -> str:
     return "<!-- daily-x-signal:end -->"
+
+
+def _remove_managed_openclaw_heartbeat_section(text: str) -> str:
+    start_marker = _openclaw_heartbeat_start_marker()
+    end_marker = _openclaw_heartbeat_end_marker()
+    if start_marker not in text or end_marker not in text:
+        return text
+    before, _sep, remainder = text.partition(start_marker)
+    _old, _sep2, after = remainder.partition(end_marker)
+    return (before.rstrip() + "\n\n" + after.lstrip()).strip() + "\n"
+
+
+def _remove_conflicting_x_digest_sections(text: str) -> str:
+    heading_pattern = re.compile(r"(?ms)(?:^---\n+)?^##\s+(?P<title>[^\n]*X 日报[^\n]*)\n.*?(?=^##\s+|\Z)")
+    cleaned = heading_pattern.sub("", text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip() + "\n"
 
 
 def _build_openclaw_heartbeat_section(project_root: Path, target_config_path: Path, config: dict[str, Any]) -> str:

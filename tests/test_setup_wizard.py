@@ -34,6 +34,7 @@ from daily_x_signal.setup_wizard import (
     collect_setup_checks,
     load_env_file,
     remove_openclaw_heartbeat,
+    _remove_conflicting_x_digest_sections,
     sync_openclaw_heartbeat,
 )
 from daily_x_signal.x_client import XReachClient
@@ -275,6 +276,36 @@ class SetupWizardTests(unittest.TestCase):
             self.assertIn("<!-- daily-x-signal:start -->", heartbeat_text)
             self.assertIn("## X 日报", heartbeat_text)
 
+    def test_sync_openclaw_heartbeat_replaces_legacy_x_digest_sections(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            heartbeat_home = Path(tmpdir) / "home"
+            heartbeat_path = heartbeat_home / ".openclaw" / "workspace" / "HEARTBEAT.md"
+            heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+            heartbeat_path.write_text(
+                "# OpenClaw HEARTBEAT\n\n"
+                "## 每日 X 日报（Luna 推送）\n\n"
+                "**触发时间**：每天 08:40（Asia/Shanghai）\n\n"
+                "检查 `output/daily-brief-YYYY-MM-DD.json`。\n\n"
+                "## 其他任务\n\n"
+                "保留这段。\n",
+                encoding="utf-8",
+            )
+            with patch("daily_x_signal.setup_wizard.Path.home", return_value=heartbeat_home):
+                sync_openclaw_heartbeat(
+                    project_root,
+                    Path("config/local.yaml"),
+                    {"scheduler": {"trigger_hour": 10, "trigger_minute": 0}},
+                )
+            heartbeat_text = heartbeat_path.read_text(encoding="utf-8")
+            self.assertNotIn("每日 X 日报（Luna 推送）", heartbeat_text)
+            self.assertNotIn("08:40", heartbeat_text)
+            self.assertIn("## 其他任务", heartbeat_text)
+            self.assertIn("<!-- daily-x-signal:start -->", heartbeat_text)
+
     def test_remove_openclaw_heartbeat_only_clears_daily_x_signal_section(self) -> None:
         import tempfile
 
@@ -295,6 +326,18 @@ class SetupWizardTests(unittest.TestCase):
             heartbeat_text = heartbeat_path.read_text(encoding="utf-8")
             self.assertIn("## 其他任务", heartbeat_text)
             self.assertNotIn("## X 日报", heartbeat_text)
+
+    def test_remove_conflicting_x_digest_sections_only_removes_x_digest_blocks(self) -> None:
+        text = (
+            "# OpenClaw HEARTBEAT\n\n"
+            "## 每日 X 日报（Luna 推送）\n\n"
+            "旧内容。\n\n"
+            "## 每日实操调研候选推荐\n\n"
+            "保留内容。\n"
+        )
+        cleaned = _remove_conflicting_x_digest_sections(text)
+        self.assertNotIn("每日 X 日报（Luna 推送）", cleaned)
+        self.assertIn("每日实操调研候选推荐", cleaned)
 
     def test_topic_choices_include_directional_copy_and_seed_terms(self) -> None:
         config = {

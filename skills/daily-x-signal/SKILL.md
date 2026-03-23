@@ -172,6 +172,7 @@ output=card_and_table
 - OpenClaw HEARTBEAT -> `./scripts/run_cli.sh schedule-tick --override-config config/local.yaml`
 
 setup 写入成功后，应把这条 HEARTBEAT 任务同步到 `~/.openclaw/workspace/HEARTBEAT.md`，而不是只在终端里打印命令。
+同步前还应扫描 `HEARTBEAT.md` 里是否已经存在旧的 X 日报任务，例如 `每日 X 日报（Luna 推送）` 这类历史段落；如果发现冲突，应该清理旧段，只保留 `daily-x-signal` 的托管段，避免 OpenClaw 读到两份 X 日报任务。
 
 不要默认要求用户继续维护一套独立的 GitHub 定时兜底，除非用户明确要保留双保险。
 
