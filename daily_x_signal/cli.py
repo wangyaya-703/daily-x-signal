@@ -65,6 +65,39 @@ def build_client(config: dict | None = None) -> XReachClient:
     return XReachClient(workdir=Path.cwd(), proxy=proxy_url or None)
 
 
+def collect_candidate_posts(
+    client: XReachClient,
+    authors: list,
+    home_candidates: list,
+    config: dict,
+    window,
+    *,
+    target_candidate_count: int,
+) -> tuple[list, list, int]:
+    batch_size = int(config["x"].get("max_active_authors_per_run", len(authors) or 0))
+    if batch_size <= 0:
+        batch_size = len(authors)
+    max_scan = int(config["x"].get("max_authors_per_run", 0) or 0)
+    if max_scan <= 0:
+        max_scan = len(authors)
+    authors_to_scan = authors[:max_scan]
+    candidate_posts = list(home_candidates)
+    scanned_authors: list = []
+    dedupe_by_conversation = bool(config["x"].get("dedupe_by_conversation", True))
+
+    for start in range(0, len(authors_to_scan), batch_size):
+        batch = authors_to_scan[start : start + batch_size]
+        if not batch:
+            break
+        scanned_authors.extend(batch)
+        candidate_posts.extend(collect_posts_for_authors(client, batch, config, window))
+        unique_candidates = dedupe_posts(candidate_posts, dedupe_by_conversation)
+        if len(unique_candidates) >= target_candidate_count:
+            return unique_candidates, scanned_authors, len(authors_to_scan)
+
+    return dedupe_posts(candidate_posts, dedupe_by_conversation), scanned_authors, len(authors_to_scan)
+
+
 def cmd_sync_authors(config: dict, client: XReachClient) -> int:
     sync_result = sync_following(client, config)
     authors = sync_result["authors"]
@@ -144,7 +177,7 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
     if following_status.get("needs_confirmation") and bool(config["x"].get("require_following_confirmation", True)):
         print(f"[warning] {following_status.get('reason')}")
 
-    candidate_posts = list(home_candidates)
+    top_n = args.top_n or int(config["profile"].get("digest_top_n", 10))
     if mode == "core_authors":
         pool = build_core_pool(history, config)
         core_handles = {item["handle"] for item in pool}
@@ -154,14 +187,19 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
     prioritized_authors = prioritize_authors(
         authors,
         home_candidates,
-        int(config["x"].get("max_active_authors_per_run", len(authors) or 0)),
+        int(config["x"].get("max_authors_per_run", 0) or len(authors) or 0),
     )
-    if prioritized_authors:
-        candidate_posts.extend(collect_posts_for_authors(client, prioritized_authors, config, window))
-    candidate_posts = dedupe_posts(candidate_posts, bool(config["x"].get("dedupe_by_conversation", True)))
+    candidate_target = max(top_n, 8)
+    candidate_posts, scanned_authors, author_scan_limit = collect_candidate_posts(
+        client,
+        prioritized_authors,
+        home_candidates,
+        config,
+        window,
+        target_candidate_count=candidate_target,
+    )
     ranked = rank_posts(candidate_posts, config, author_stats, interest_profile=interest_profile)
     ranked = limit_posts_per_author(ranked, int(config["ranking"].get("max_posts_per_author", 2)))
-    top_n = args.top_n or int(config["profile"].get("digest_top_n", 10))
     hydrate_threads(client, ranked, int(config["x"].get("thread_fetch_top_n", 12)))
 
     llm_client = LLMClient(config)
@@ -190,7 +228,8 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
         section_stats=section_stats,
         metadata={
             "candidate_count": len(candidate_posts),
-            "author_count": len(prioritized_authors or authors),
+            "author_count": len(scanned_authors or prioritized_authors or authors),
+            "author_scan_limit": author_scan_limit,
             "following_cache_used": following_cache_used,
             "following_status": following_status,
             "interest_profile": interest_profile,
