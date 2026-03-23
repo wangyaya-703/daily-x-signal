@@ -1,6 +1,6 @@
 ---
 name: daily-x-signal
-version: "2026.03.23.3"
+version: "2026.03.23.4"
 description: 从关注的 X 账号中生成高信号中文日报，并优先通过 CLI setup 完成引导式配置，再生成过去 24 小时或调度窗口内的日报。用户提到 X/Twitter 日报、过去 24 小时动态、重点帖子排序、今日必读、飞书卡片、帖子追踪表、首次配置日报机器人时，都应使用这个 skill，尤其是在 OpenClaw 远端环境中。
 metadata:
   trigger-hint: 当用户想配置或生成 X 日报、检查 daily-x-signal 是否可运行、补齐飞书和 xreach 环境、查看过去 24 小时值得看的帖子时使用。
@@ -28,6 +28,8 @@ user-invocable: true
 2. 如果还不能运行，明确告诉用户缺什么，并优先引导走 `./scripts/run_cli.sh setup`。
 
 如果用户明确说的是“重新配置 / 重跑 setup / 更新配置”，不要停在健康检查结果本身；应先用 3 到 6 行做简短体检摘要，然后直接进入 `setup` 流程。
+
+如果用户是在升级已有配置，不要直接沿用旧配置再继续；应先扫描是否存在旧的死代理、过小的作者扫描批次、失效的 linked bot 开关、未完整配置却仍启用的帖子追踪表等遗留项，再给一段“迁移摘要”。
 
 不要在依赖缺失时硬生成结果，更不要编造日报内容。
 
@@ -131,6 +133,28 @@ cd ~/.openclaw/workspace/daily-x-signal
 
 不要把“先手写 `config/local.yaml`”当成默认路径，除非用户明确要求。
 
+## 老用户升级迁移
+
+如果检测到已经存在 `config/local.yaml`，并且用户是在“更新配置 / 重跑 setup / 升级 skill”，优先走迁移路径：
+
+1. 先做旧配置清理检查
+2. 用 3 到 6 行说明：
+   - 检测到了哪些旧配置
+   - 自动清理了哪些项
+   - 哪些设置被沿用
+3. 再进入 `setup`
+4. 老用户默认只确认：
+   - 推荐兴趣方向
+   - 少量关键词增减
+   - 推送时间
+
+迁移摘要里应优先提到这些常见自动清理项：
+
+- 未监听的 `x.proxy_url`
+- 过小的 `x.max_active_authors_per_run`
+- `openclaw` 模式下失效的 `use_linked_feishu_bot`
+- 未完整配置却仍然开启的 `feishu_bitable.enabled`
+
 ## OpenClaw 交互要求
 
 在 OpenClaw 里不要把 `setup` 的每一个 CLI 问题机械地逐条转发给用户，尤其不要直接回显已有的 `viewer_handle` 或 `viewer_user_id` 原值。
@@ -184,6 +208,7 @@ output=card_and_table
 setup 写入成功后，应把这条 HEARTBEAT 任务同步到 `~/.openclaw/workspace/HEARTBEAT.md`，而不是只在终端里打印命令。
 同时应单独检查 `OpenClaw Feishu Bot` 是否真的就绪；如果缺少 `OPENCLAW_FEISHU_APP_ID / OPENCLAW_FEISHU_APP_SECRET / OPENCLAW_FEISHU_RECEIVE_ID`，就不要把当前状态描述成“已经切到 OpenClaw Bot 推送”，而应明确说明“仍沿用 repo 里的飞书配置发送”。
 同步前还应扫描 `HEARTBEAT.md` 里是否已经存在旧的 X 日报任务，例如 `每日 X 日报（Luna 推送）` 这类历史段落；如果发现冲突，应该清理旧段，只保留 `daily-x-signal` 的托管段，避免 OpenClaw 读到两份 X 日报任务。
+如果 setup 自动清理了旧配置，必须明确告诉用户“已清理哪些项”，不要静默修改后直接进入下一题。
 
 不要默认要求用户继续维护一套独立的 GitHub 定时兜底，除非用户明确要保留双保险。
 

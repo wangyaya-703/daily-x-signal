@@ -13,7 +13,7 @@ class DailyXSignalSkillTests(unittest.TestCase):
         text = SKILL_PATH.read_text(encoding="utf-8")
         self.assertIn("user-invocable: true", text)
         self.assertIn('emoji: "📰"', text)
-        self.assertIn('version: "2026.03.23.3"', text)
+        self.assertIn('version: "2026.03.23.4"', text)
 
     def test_skill_includes_openclaw_workspace_bootstrap_path(self) -> None:
         text = SKILL_PATH.read_text(encoding="utf-8")
@@ -92,6 +92,9 @@ class DailyXSignalSkillTests(unittest.TestCase):
         self.assertIn("npm install -g xreach-cli", text)
         self.assertIn("~/.openclaw/workspace/HEARTBEAT.md", text)
         self.assertIn("重新配置 / 重跑 setup / 更新配置", text)
+        self.assertIn("迁移摘要", text)
+        self.assertIn("未监听的 `x.proxy_url`", text)
+        self.assertIn("过小的 `x.max_active_authors_per_run`", text)
         self.assertIn("OpenClaw Feishu Bot", text)
         self.assertIn("系统级 python3.11 缺失，但 repo 内 runtime 已就绪", text)
 

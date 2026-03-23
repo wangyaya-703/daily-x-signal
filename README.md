@@ -83,12 +83,44 @@ xreach auth set --auth-token '你的_auth_token' --ct0 '你的_ct0'
 git clone https://github.com/wangyaya-703/daily-x-signal.git
 cd daily-x-signal
 python3.11 -m pip install -e .
-
-./scripts/run_cli.sh setup
-./scripts/run_cli.sh generate
-./scripts/run_cli.sh generate --window-mode rolling_24h
-./scripts/run_cli.sh show-core-authors
 ```
+
+然后按你的场景走，不要上来先手写 YAML。
+
+### 路径 A：第一次配置
+
+```bash
+./scripts/run_cli.sh setup --override-config config/local.yaml
+./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml
+```
+
+这条路径适合：
+
+- 第一次安装
+- 第一次绑定 X 账号
+- 第一次配置飞书卡片或帖子追踪表
+
+### 路径 B：老用户更新配置
+
+```bash
+./scripts/run_cli.sh setup --override-config config/local.yaml
+```
+
+`setup` 现在会优先做一轮旧配置清理和迁移摘要，再让你确认：
+
+- 是否沿用已有 X 访问配置
+- 当前推荐的兴趣方向
+- 推送时间
+- 宿主模式和输出方式
+
+如果检测到旧配置里有明显遗留问题，会自动修正，例如：
+
+- 未监听的本地 `x.proxy_url`
+- 过小的作者扫描批次
+- `openclaw` 模式下失效的 linked bot 开关
+- 未完整配置却仍然开启的 `feishu_bitable`
+
+### 路径 C：OpenClaw 远端运行
 
 如果你是在 OpenClaw 远端环境里运行，优先用仓库自带的入口，避免 PATH 不一致：
 
@@ -98,6 +130,13 @@ python3.11 -m pip install -e .
 ./scripts/run_cli.sh generate --window-mode rolling_24h --override-config config/local.yaml
 ./scripts/run_cli.sh schedule-tick --override-config config/local.yaml
 ```
+
+OpenClaw 下推荐的用户心智是：
+
+1. 先体检仓库、X 登录态和飞书输出条件
+2. 再进入 `setup`
+3. `setup` 写入后自动跑一版 `rolling_24h` 预览
+4. 正式推送交给 `schedule-tick` 或 OpenClaw HEARTBEAT
 
 ## 配置方式
 
@@ -128,10 +167,50 @@ cp config/local.example.yaml config/local.yaml
 - 飞书凭证是否齐全
 - following 是否读全
 - 推荐兴趣主题和关键词
-- 运行偏好（模式、展示条数、是否纳入回复）
+- 运行偏好（推送时间、阅读风格、输出方式）
 - 是否启用飞书卡片 / 多维表格
 
 最后会把结果写回 `config/local.yaml`。
+
+### setup 的实际交互节奏
+
+为了减少多轮追问，`setup` 现在分成两段：
+
+1. 访问配置
+   - 默认只收 `X handle`
+   - 只有 following 同步失败时，才追问 `viewer_user_id / proxy_url`
+2. 偏好表单
+   - 一轮表单同时确认：
+     - `topics`
+     - `extra_keywords`
+     - `remove_keywords`
+     - `push_time`
+     - `style`
+     - `output`
+
+如果是老用户，默认沿用旧的账号、following 确认和大部分运行偏好，只要求确认推荐方向和少量增量调整。
+
+### 推荐的偏好表单写法
+
+```text
+topics=1,2,4
+extra_keywords=paper, benchmark, product launch
+remove_keywords=meme
+push_time=08:30
+style=balanced
+output=card_and_table
+```
+
+其中：
+
+- `style`
+  - `focused`: 精读优先
+  - `balanced`: 默认推荐
+  - `broad`: 尽量别漏
+- `output`
+  - `local_only`
+  - `card_only`
+  - `card_and_table`
 
 ### 你至少需要补的字段
 
@@ -194,12 +273,16 @@ outputs:
 
 ## 验证方式
 
-### 1. 验证 X 认证
+推荐按这个顺序验证，不要一次性全开。
+
+### 1. 验证 X 认证和 following
 
 ```bash
 xreach auth check
 ./scripts/run_cli.sh sync-authors --override-config config/local.yaml
 ```
+
+如果这里失败，先不要继续跑 `generate`。
 
 ### 2. 验证 LLM
 
@@ -239,6 +322,17 @@ xreach auth check
 - `Topics`
 
 系统会按 `Post ID` 做 upsert，同一条帖子重复进入日报时会更新原有记录，不会重复插入多行。
+
+### 5. 验证调度链路
+
+```bash
+./scripts/run_cli.sh schedule-tick --override-config config/local.yaml
+```
+
+如果你用的是 `openclaw` 模式，最终应关注两件事：
+
+- HEARTBEAT 是否只保留了一份 `daily-x-signal` 托管任务
+- 发送端到底是 OpenClaw Bot 还是 repo 自己的飞书配置
 
 ## 常用命令
 
@@ -283,6 +377,28 @@ xreach auth check
 
 ```bash
 ./scripts/run_cli.sh setup --override-config config/local.yaml
+```
+
+## OpenClaw Onboarding
+
+如果你是通过 OpenClaw 使用这个项目，推荐的 onboarding 流程是：
+
+1. 先说“帮我检查 daily-x-signal 是否可运行”
+2. 再说“帮我进入 setup”
+3. 让 agent 先展示推荐方向，再给一次性表单
+4. setup 完成后自动跑一版预览
+5. 真正的定时推送走 `schedule-tick`
+
+推荐开场话术：
+
+```text
+我想重新配置 x-signal 日报。先简短检查一下，再直接进入 setup；访问配置确认后，请把兴趣方向、推送时间、阅读风格和输出方式放到一张一次性表单里给我选。
+```
+
+如果你是老用户升级，推荐说得更直接：
+
+```text
+我想更新 x-signal 日报配置。请先清理旧配置，再告诉我迁移了哪些内容，然后只让我确认新的兴趣方向和推送时间。
 ```
 
 ## launchd 生产调度
