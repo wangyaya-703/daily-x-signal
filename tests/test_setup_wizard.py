@@ -25,6 +25,7 @@ from daily_x_signal.setup_wizard import (
     _parse_yes_no,
     _probe_proxy_url,
     _resolve_output_choice,
+    _resolve_openclaw_bot_credentials,
     _scheduler_patch,
     _select_topics,
     _split_csv,
@@ -168,6 +169,7 @@ class SetupWizardTests(unittest.TestCase):
         standalone_patch = _host_mode_patch(
             "standalone",
             {"github_fallback": {"enabled": True}, "openclaw": {}, "outputs": {"feishu": {"delivery_type": "webhook"}}},
+            linked_feishu_bot_ready=False,
         )
         self.assertTrue(standalone_patch["github_fallback"]["enabled"])
         self.assertFalse(standalone_patch["openclaw"]["enabled"])
@@ -176,11 +178,24 @@ class SetupWizardTests(unittest.TestCase):
         openclaw_patch = _host_mode_patch(
             "openclaw",
             {"github_fallback": {"enabled": True}, "openclaw": {"bot_receive_id_type": "chat_id"}},
+            linked_feishu_bot_ready=True,
         )
         self.assertFalse(openclaw_patch["github_fallback"]["enabled"])
         self.assertTrue(openclaw_patch["openclaw"]["enabled"])
+        self.assertTrue(openclaw_patch["openclaw"]["use_linked_feishu_bot"])
         self.assertEqual(openclaw_patch["feishu_delivery_type"], "app")
         self.assertEqual(openclaw_patch["feishu_receive_id_type"], "chat_id")
+
+    def test_host_mode_patch_disables_linked_bot_when_openclaw_env_missing(self) -> None:
+        openclaw_patch = _host_mode_patch(
+            "openclaw",
+            {"github_fallback": {"enabled": True}, "openclaw": {}, "outputs": {"feishu": {"delivery_type": "webhook"}}},
+            linked_feishu_bot_ready=False,
+        )
+        self.assertFalse(openclaw_patch["github_fallback"]["enabled"])
+        self.assertTrue(openclaw_patch["openclaw"]["enabled"])
+        self.assertFalse(openclaw_patch["openclaw"]["use_linked_feishu_bot"])
+        self.assertEqual(openclaw_patch["feishu_delivery_type"], "webhook")
 
     def test_load_env_file_parses_export_lines(self) -> None:
         from pathlib import Path
@@ -219,6 +234,39 @@ class SetupWizardTests(unittest.TestCase):
         proxy_check = next(item for item in checks if item["key"] == "xreach_proxy")
         self.assertFalse(proxy_check["ok"])
         self.assertIn("未监听", proxy_check["detail"])
+
+    def test_collect_setup_checks_reports_openclaw_bot_status(self) -> None:
+        client = XReachClient(binary="/tmp/xreach")
+        config = {
+            "runtime": {"host_mode": "openclaw"},
+            "openclaw": {
+                "bot_app_id_env": "OPENCLAW_FEISHU_APP_ID",
+                "bot_app_secret_env": "OPENCLAW_FEISHU_APP_SECRET",
+                "bot_receive_id_env": "OPENCLAW_FEISHU_RECEIVE_ID",
+            },
+        }
+        checks = collect_setup_checks(config, client, {"OPENCLAW_FEISHU_APP_ID": "app"})
+        bot_check = next(item for item in checks if item["key"] == "openclaw_feishu_bot")
+        self.assertFalse(bot_check["ok"])
+        self.assertIn("OpenClaw Bot", bot_check["detail"])
+
+    def test_resolve_openclaw_bot_credentials_reads_env_names(self) -> None:
+        config = {
+            "openclaw": {
+                "bot_app_id_env": "OPENCLAW_FEISHU_APP_ID",
+                "bot_app_secret_env": "OPENCLAW_FEISHU_APP_SECRET",
+                "bot_receive_id_env": "OPENCLAW_FEISHU_RECEIVE_ID",
+            }
+        }
+        dotenv_values = {
+            "OPENCLAW_FEISHU_APP_ID": "app",
+            "OPENCLAW_FEISHU_APP_SECRET": "secret",
+            "OPENCLAW_FEISHU_RECEIVE_ID": "chat",
+        }
+        creds = _resolve_openclaw_bot_credentials(config, dotenv_values)
+        self.assertEqual(creds["app_id"], "app")
+        self.assertEqual(creds["app_secret"], "secret")
+        self.assertEqual(creds["receive_id"], "chat")
 
     def test_install_xreach_cli_reports_success_when_binary_found(self) -> None:
         completed = unittest.mock.Mock(returncode=0, stdout="ok", stderr="")

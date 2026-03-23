@@ -189,7 +189,7 @@ def run_setup(
     enable_bitable = setup_choices["enable_bitable"]
     bitable_ready = setup_choices["bitable_ready"]
     host_mode = setup_choices["host_mode"]
-    host_mode_patch = _host_mode_patch(host_mode, config)
+    host_mode_patch = _host_mode_patch(host_mode, config, linked_feishu_bot_ready=_check_ok(checks, "openclaw_feishu_bot"))
 
     patch = {
         "runtime": {
@@ -348,6 +348,19 @@ def collect_setup_checks(config: dict[str, Any], client: XReachClient, dotenv_va
             "name": "feishu app",
             "ok": bool(feishu_app and feishu_secret and feishu_receive),
             "detail": "app_id/app_secret/receive_id 已齐全" if (feishu_app and feishu_secret and feishu_receive) else "飞书凭证不完整",
+        }
+    )
+    openclaw_bot = _resolve_openclaw_bot_credentials(config, dotenv_values)
+    checks.append(
+        {
+            "key": "openclaw_feishu_bot",
+            "name": "openclaw feishu bot",
+            "ok": bool(openclaw_bot["app_id"] and openclaw_bot["app_secret"] and openclaw_bot["receive_id"]),
+            "detail": (
+                "OpenClaw Bot 环境变量已齐全"
+                if (openclaw_bot["app_id"] and openclaw_bot["app_secret"] and openclaw_bot["receive_id"])
+                else "未检测到完整的 OpenClaw Bot 环境变量"
+            ),
         }
     )
     bitable_cfg = config.get("outputs", {}).get("feishu_bitable", {})
@@ -511,12 +524,16 @@ def _resolve_feishu_check_value(config: dict[str, Any], key: str, dotenv_values:
         return resolved
     if _current_host_mode(config) != "openclaw" or not bool(config.get("openclaw", {}).get("use_linked_feishu_bot", True)):
         return None
-    openclaw_env_map = {
-        "app_id": "bot_app_id_env",
-        "app_secret": "bot_app_secret_env",
-        "receive_id": "bot_receive_id_env",
+    return _resolve_openclaw_bot_credentials(config, dotenv_values).get(key)
+
+
+def _resolve_openclaw_bot_credentials(config: dict[str, Any], dotenv_values: dict[str, str]) -> dict[str, str | None]:
+    openclaw_cfg = config.get("openclaw", {})
+    return {
+        "app_id": _resolve_config_value(None, openclaw_cfg.get("bot_app_id_env"), dotenv_values),
+        "app_secret": _resolve_config_value(None, openclaw_cfg.get("bot_app_secret_env"), dotenv_values),
+        "receive_id": _resolve_config_value(None, openclaw_cfg.get("bot_receive_id_env"), dotenv_values),
     }
-    return _resolve_config_value(None, config.get("openclaw", {}).get(openclaw_env_map[key]), dotenv_values)
 
 
 def _probe_proxy_url(proxy_url: str) -> tuple[bool, str]:
@@ -859,6 +876,7 @@ def _collect_preference_choices(
             ["Output", "Current", "Ready"],
             [
                 ["Feishu Card", bool_text(feishu_default), bool_text(_check_ok(checks, "feishu_app"))],
+                ["OpenClaw Bot", bool_text(bool(config.get("openclaw", {}).get("use_linked_feishu_bot", False))), bool_text(_check_ok(checks, "openclaw_feishu_bot"))],
                 ["Feishu Bitable", bool_text(existing_bitable_enabled), bool_text(bitable_ready)],
                 ["Local Files", "Yes", "Yes"],
             ],
@@ -1068,10 +1086,13 @@ def _scheduler_patch(push_time: str, config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _host_mode_patch(host_mode: str, config: dict[str, Any]) -> dict[str, Any]:
+def _host_mode_patch(host_mode: str, config: dict[str, Any], *, linked_feishu_bot_ready: bool) -> dict[str, Any]:
     openclaw_cfg = config.get("openclaw", {})
     github_fallback_cfg = config.get("github_fallback", {})
     if host_mode == "openclaw":
+        linked_receive_id_type = str(openclaw_cfg.get("bot_receive_id_type", "open_id")).strip() or "open_id"
+        existing_delivery_type = str(config.get("outputs", {}).get("feishu", {}).get("delivery_type", "webhook")).strip() or "webhook"
+        existing_receive_id_type = str(config.get("outputs", {}).get("feishu", {}).get("receive_id_type", "open_id")).strip() or "open_id"
         return {
             "github_fallback": {
                 **github_fallback_cfg,
@@ -1080,11 +1101,11 @@ def _host_mode_patch(host_mode: str, config: dict[str, Any]) -> dict[str, Any]:
             "openclaw": {
                 **openclaw_cfg,
                 "enabled": True,
-                "use_linked_feishu_bot": True,
+                "use_linked_feishu_bot": linked_feishu_bot_ready,
                 "use_heartbeat": True,
             },
-            "feishu_delivery_type": "app",
-            "feishu_receive_id_type": str(openclaw_cfg.get("bot_receive_id_type", "open_id")).strip() or "open_id",
+            "feishu_delivery_type": "app" if linked_feishu_bot_ready else existing_delivery_type,
+            "feishu_receive_id_type": linked_receive_id_type if linked_feishu_bot_ready else existing_receive_id_type,
         }
     return {
         "github_fallback": {
