@@ -46,6 +46,7 @@ STYLE_PRESETS: dict[str, dict[str, Any]] = {
         "reply_like_threshold": 60,
     },
 }
+AUTHOR_SCAN_BATCH_RECOMMENDED = 20
 
 
 def run_setup(
@@ -60,10 +61,14 @@ def run_setup(
     target_override = AppConfig.load(target_config_path) if target_config_path.exists() else AppConfig(raw={}, path=target_config_path)
     config = AppConfig(raw=deep_merge(base_config.raw, target_override.raw), path=target_override.path).raw
     dotenv_values = load_env_file(Path.cwd() / ".env.local")
+    config, cleanup_actions = _cleanup_legacy_config(config, dotenv_values)
 
     print_section("Setup Target")
     print(render_table(["Item", "Value"], [["Base Config", str(base_config_path)], ["Write Target", str(target_config_path)]]))
     print(render_table(["Flow", "What happens"], [["1", "检查依赖、认证、飞书输出条件"], ["2", "同步 following 并确认关注总数"], ["3", "根据 following + 历史结果推荐兴趣主题"], ["4", "确认输出方式与运行偏好"], ["5", "写入本地私有配置"]]))
+    if cleanup_actions:
+        print_section("自动清理旧配置")
+        print(render_table(["Action"], [[item] for item in cleanup_actions]))
 
     client = _ensure_xreach_ready(client)
 
@@ -206,6 +211,7 @@ def run_setup(
             "viewer_handle": viewer_handle or None,
             "viewer_user_id": viewer_user_id or None,
             "proxy_url": proxy_url or None,
+            "max_active_authors_per_run": int(config.get("x", {}).get("max_active_authors_per_run", AUTHOR_SCAN_BATCH_RECOMMENDED) or AUTHOR_SCAN_BATCH_RECOMMENDED),
             "expected_following_count": int(expected_following_count) if str(expected_following_count).strip().isdigit() else None,
             "following_count_confirmed": following_confirmed,
             "include_replies": include_replies,
@@ -499,6 +505,40 @@ def load_env_file(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip().strip('"').strip("'")
     return values
+
+
+def _cleanup_legacy_config(config: dict[str, Any], dotenv_values: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
+    cleaned = deep_merge({}, config)
+    actions: list[str] = []
+    x_cfg = cleaned.setdefault("x", {})
+    proxy_url = str(x_cfg.get("proxy_url") or "").strip()
+    proxy_ok, _proxy_detail = _probe_proxy_url(proxy_url)
+    if proxy_url and not proxy_ok and "127.0.0.1" in proxy_url:
+        x_cfg["proxy_url"] = None
+        actions.append("清理了未监听的本地 x.proxy_url。")
+
+    current_batch = int(x_cfg.get("max_active_authors_per_run", 0) or 0)
+    if current_batch <= 0 or current_batch < AUTHOR_SCAN_BATCH_RECOMMENDED:
+        x_cfg["max_active_authors_per_run"] = AUTHOR_SCAN_BATCH_RECOMMENDED
+        actions.append(f"将作者分批扫描上限统一为 {AUTHOR_SCAN_BATCH_RECOMMENDED}。")
+
+    host_mode = _current_host_mode(cleaned)
+    if host_mode == "openclaw":
+        openclaw_cfg = cleaned.setdefault("openclaw", {})
+        bot_creds = _resolve_openclaw_bot_credentials(cleaned, dotenv_values)
+        if not (bot_creds["app_id"] and bot_creds["app_secret"] and bot_creds["receive_id"]) and openclaw_cfg.get("use_linked_feishu_bot", True):
+            openclaw_cfg["use_linked_feishu_bot"] = False
+            actions.append("检测到 OpenClaw Bot 环境变量不完整，已关闭 use_linked_feishu_bot。")
+        if cleaned.get("github_fallback", {}).get("enabled", False):
+            cleaned.setdefault("github_fallback", {})["enabled"] = False
+            actions.append("openclaw 模式下已关闭 github fallback。")
+
+    bitable_cfg = cleaned.setdefault("outputs", {}).setdefault("feishu_bitable", {})
+    if bitable_cfg.get("enabled") and not (bitable_cfg.get("app_token") and bitable_cfg.get("table_id")):
+        bitable_cfg["enabled"] = False
+        actions.append("追踪表配置不完整，已关闭 feishu_bitable.enabled。")
+
+    return cleaned, actions
 
 
 def _resolve_config_value(raw_value: Any, env_name: Any, dotenv_values: dict[str, str]) -> str | None:

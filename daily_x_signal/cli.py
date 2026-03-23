@@ -43,6 +43,7 @@ FOLLOWING_CACHE_PATH = _PROJECT_ROOT / "state" / "following_cache.json"
 CORE_POOL_PATH = _PROJECT_ROOT / "state" / "core_authors.json"
 SCHEDULER_STATE_PATH = _PROJECT_ROOT / "state" / "scheduler_state.json"
 LAB_STATE_PATH = _PROJECT_ROOT / "state" / "lab_experiments.json"
+AUTHOR_SCAN_BATCH_MIN = 20
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,13 +75,17 @@ def collect_candidate_posts(
     *,
     target_candidate_count: int,
 ) -> tuple[list, list, int]:
-    batch_size = int(config["x"].get("max_active_authors_per_run", len(authors) or 0))
-    if batch_size <= 0:
-        batch_size = len(authors)
     max_scan = int(config["x"].get("max_authors_per_run", 0) or 0)
     if max_scan <= 0:
         max_scan = len(authors)
     authors_to_scan = authors[:max_scan]
+    if authors_to_scan:
+        configured_batch_size = int(config["x"].get("max_active_authors_per_run", len(authors_to_scan)) or 0)
+        if configured_batch_size <= 0:
+            configured_batch_size = len(authors_to_scan)
+        batch_size = min(len(authors_to_scan), max(AUTHOR_SCAN_BATCH_MIN, configured_batch_size))
+    else:
+        batch_size = 0
     candidate_posts = list(home_candidates)
     scanned_authors: list = []
     dedupe_by_conversation = bool(config["x"].get("dedupe_by_conversation", True))
@@ -230,6 +235,15 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
             "candidate_count": len(candidate_posts),
             "author_count": len(scanned_authors or prioritized_authors or authors),
             "author_scan_limit": author_scan_limit,
+            "author_scan_batch_size": min(
+                len(prioritized_authors),
+                max(
+                    AUTHOR_SCAN_BATCH_MIN,
+                    int(config["x"].get("max_active_authors_per_run", len(prioritized_authors)) or 0) or len(prioritized_authors),
+                ),
+            )
+            if prioritized_authors
+            else 0,
             "following_cache_used": following_cache_used,
             "following_status": following_status,
             "interest_profile": interest_profile,

@@ -40,7 +40,7 @@ x:
   fallback_to_home_timeline: true
   following_sync_max_pages: 20
   max_authors_per_run: 0
-  max_active_authors_per_run: 12
+  max_active_authors_per_run: 20
   tweets_pages_per_author: 1
   include_replies: true
   reply_like_threshold: 100

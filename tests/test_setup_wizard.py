@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from daily_x_signal.setup_wizard import (
+    _cleanup_legacy_config,
     _build_openclaw_heartbeat_section,
     _collect_preference_choices,
     _clean_dead_proxy_env,
@@ -93,6 +94,25 @@ class SetupWizardTests(unittest.TestCase):
         self.assertTrue(_parse_yes_no("yes", False))
         self.assertFalse(_parse_yes_no("no", True))
         self.assertTrue(_parse_yes_no("", True))
+
+    def test_cleanup_legacy_config_normalizes_stale_runtime_settings(self) -> None:
+        config = {
+            "runtime": {"host_mode": "openclaw"},
+            "x": {
+                "proxy_url": "http://127.0.0.1:65535",
+                "max_active_authors_per_run": 8,
+            },
+            "github_fallback": {"enabled": True},
+            "openclaw": {"use_linked_feishu_bot": True},
+            "outputs": {"feishu_bitable": {"enabled": True}},
+        }
+        cleaned, actions = _cleanup_legacy_config(config, {})
+        self.assertIsNone(cleaned["x"]["proxy_url"])
+        self.assertEqual(cleaned["x"]["max_active_authors_per_run"], 20)
+        self.assertFalse(cleaned["github_fallback"]["enabled"])
+        self.assertFalse(cleaned["openclaw"]["use_linked_feishu_bot"])
+        self.assertFalse(cleaned["outputs"]["feishu_bitable"]["enabled"])
+        self.assertTrue(actions)
 
     def test_collect_preference_choices_existing_user_uses_single_form(self) -> None:
         config = {
