@@ -43,6 +43,26 @@ SUBSTANCE_HINTS = (
     "方法",
 )
 
+# 营销/推广类关键词，命中时降低干货分
+MARKETING_HINTS = (
+    "discount",
+    "sale",
+    "limited time",
+    "exclusive offer",
+    "sign up now",
+    "join now",
+    "register now",
+    "subscribe now",
+    "领取",
+    "优惠",
+    "限时",
+    "免费领",
+    "promo code",
+    "coupon",
+    "early bird",
+    "waitlist",
+)
+
 
 def score_topics(post: Post, config: dict[str, Any]) -> dict[str, float]:
     text = post.primary_text.lower()
@@ -77,6 +97,12 @@ def score_substance(post: Post) -> float:
         score += 0.3
     if post.is_reply and post.like_count >= 100:
         score += 0.5
+    # 营销内容降权
+    if any(hint in lowered for hint in MARKETING_HINTS):
+        score -= 0.6
+    # 纯转推降权（无原创内容）
+    if getattr(post, "is_retweet", False):
+        score -= 1.0
     return score
 
 
@@ -111,6 +137,15 @@ def penalty(post: Post, config: dict[str, Any], topic_relevance: float, substanc
         score += 1.4
     if "\n" not in text and len(text) < 100 and not re.search(r"https?://", text):
         score += 0.8
+    # 高互动但低主题相关 + 低干货 = 病毒传播但无信息量
+    social = math.log1p(post.like_count + post.retweet_count)
+    if social > 5.0 and topic_relevance <= 0.5 and substance < 1.0:
+        score += 2.0
+    # 用户配置的不喜欢关键词
+    disliked = config.get("profile", {}).get("disliked_keywords", [])
+    for kw in disliked:
+        if str(kw).lower() in lowered:
+            score += 1.5
     return score
 
 

@@ -5,6 +5,7 @@ from typing import Any
 
 import requests
 
+from .log import logger
 from .models import Post, Report
 from .personalization import topic_labels
 from .store import save_json
@@ -32,15 +33,27 @@ def upsert_feishu_bitable(
     save_json(preview_path, rows)
 
     token = get_token(config)
-    upserted = 0
+    succeeded = 0
+    failed = 0
     for row in rows:
-        existing_record_id = _find_record_id_by_post_id(token, app_token, table_id, table_cfg, str(row[_field_name(table_cfg, "post_id", "Post ID")]))
-        if existing_record_id:
-            _update_record(token, app_token, table_id, existing_record_id, row)
-        else:
-            _create_record(token, app_token, table_id, row)
-        upserted += 1
-    return preview_path, f"{upserted} rows upserted"
+        post_id_value = str(row[_field_name(table_cfg, "post_id", "Post ID")])
+        try:
+            existing_record_id = _find_record_id_by_post_id(token, app_token, table_id, table_cfg, post_id_value)
+            if existing_record_id:
+                _update_record(token, app_token, table_id, existing_record_id, row)
+            else:
+                _create_record(token, app_token, table_id, row)
+            succeeded += 1
+        except Exception as exc:
+            failed += 1
+            logger.warning("bitable upsert 失败 (post_id=%s): %s", post_id_value, exc)
+    summary = f"{succeeded}/{succeeded + failed} rows upserted"
+    if failed:
+        summary += f", {failed} failed"
+        logger.warning("bitable 批量 upsert 完成: %s", summary)
+    else:
+        logger.info("bitable 批量 upsert 完成: %s", summary)
+    return preview_path, summary
 
 
 def bitable_app_url(config: dict[str, Any]) -> str | None:

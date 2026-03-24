@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .config import AppConfig
 from .console import bool_text, print_section, render_table
+from .log import logger, setup_logging
 from .collector import (
     authors_from_cache,
     collect_home_candidates,
@@ -208,10 +209,12 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
     hydrate_threads(client, ranked, int(config["x"].get("thread_fetch_top_n", 12)))
 
     llm_client = LLMClient(config)
-    llm_payload = llm_client.summarize_posts(
+    llm_payload, llm_error = llm_client.summarize_posts(
         ranked[: int(config["llm"].get("max_input_posts", 12))],
         interest_profile=interest_profile,
     )
+    if llm_error:
+        logger.warning("LLM 摘要失败，将使用本地降级摘要: %s", llm_error)
     must_read_id = apply_llm_summary(ranked, llm_payload)
     llm_watchlist = extract_llm_watchlist(llm_payload)
     llm_overview = extract_llm_overview(llm_payload)
@@ -248,6 +251,7 @@ def generate_digest(args: argparse.Namespace, config: dict, client: XReachClient
             "following_status": following_status,
             "interest_profile": interest_profile,
             "llm_enabled": llm_client.is_enabled(),
+            "llm_status": "success" if llm_payload else f"failed: {llm_error}" if llm_error else "disabled",
         },
     )
 
@@ -672,6 +676,7 @@ def cmd_lab(config: dict, lab_args: argparse.Namespace) -> int:
 def main() -> int:
     import sys
 
+    setup_logging()
     _maybe_warn_skill_update()
 
     # lab 命令需要提前拦截，因为它有自己的参数解析器

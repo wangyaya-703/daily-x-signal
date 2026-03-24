@@ -1,14 +1,47 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
 from .feishu_bitable import bitable_app_url, upsert_feishu_bitable
+from .log import logger
 from .models import Report
 from .store import save_json
+
+# 重试配置
+_MAX_RETRIES = 3
+_RETRY_BASE_SEC = 1
+
+
+def _retry_request(
+    func: Callable[[], requests.Response],
+    label: str = "HTTP request",
+) -> requests.Response:
+    """带指数退避的 HTTP 请求重试。只对网络错误和 5xx 重试，4xx 直接抛出。"""
+    for attempt in range(_MAX_RETRIES):
+        try:
+            response = func()
+            if response.status_code >= 500 and attempt < _MAX_RETRIES - 1:
+                wait = _RETRY_BASE_SEC * (2 ** attempt)
+                logger.warning("%s 返回 %d，%ds 后重试 (%d/%d)", label, response.status_code, wait, attempt + 1, _MAX_RETRIES)
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            return response
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            if attempt < _MAX_RETRIES - 1:
+                wait = _RETRY_BASE_SEC * (2 ** attempt)
+                logger.warning("%s 网络错误: %s，%ds 后重试 (%d/%d)", label, type(exc).__name__, wait, attempt + 1, _MAX_RETRIES)
+                time.sleep(wait)
+            else:
+                logger.error("%s 重试 %d 次后仍失败: %s", label, _MAX_RETRIES, exc)
+                raise
+    # 不应该到这里，但以防万一
+    raise RuntimeError(f"{label} 重试次数用尽")
 
 
 def build_feishu_card(report: Report, config: dict[str, Any]) -> dict[str, Any]:
@@ -126,8 +159,12 @@ def deliver_feishu(report: Report, config: dict[str, Any]) -> tuple[Path | None,
     webhook_url = _resolve_value(feishu_cfg.get("webhook_url"), feishu_cfg.get("bot_webhook_env", ""))
     if not webhook_url:
         return preview_path, None
-    response = requests.post(webhook_url, json=payload, timeout=30)
-    response.raise_for_status()
+    logger.info("飞书 webhook 投递开始")
+    response = _retry_request(
+        lambda: requests.post(webhook_url, json=payload, timeout=30),
+        label="飞书 webhook",
+    )
+    logger.info("飞书 webhook 投递成功: %d", response.status_code)
     return preview_path, response.status_code
 
 
@@ -138,23 +175,27 @@ def deliver_feishu_bitable(report: Report, config: dict[str, Any]) -> tuple[Path
 def _send_app_message(config: dict[str, Any], receive_id: str, card: dict[str, Any]) -> requests.Response:
     tenant_access_token = get_tenant_access_token(config)
     receive_id_type = _resolve_receive_id_type(config)
-    response = requests.post(
-        f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={receive_id_type}",
-        headers={
-            "Authorization": f"Bearer {tenant_access_token}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "receive_id": receive_id,
-            "msg_type": "interactive",
-            "content": requests.compat.json.dumps(card, ensure_ascii=False),
-        },
-        timeout=30,
+    logger.info("飞书 app 消息投递开始 (receive_id_type=%s)", receive_id_type)
+    response = _retry_request(
+        lambda: requests.post(
+            f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={receive_id_type}",
+            headers={
+                "Authorization": f"Bearer {tenant_access_token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "receive_id": receive_id,
+                "msg_type": "interactive",
+                "content": requests.compat.json.dumps(card, ensure_ascii=False),
+            },
+            timeout=30,
+        ),
+        label="飞书 app 消息",
     )
-    response.raise_for_status()
     payload = response.json()
     if payload.get("code") != 0:
         raise ValueError(f"Feishu app delivery failed: {payload}")
+    logger.info("飞书 app 消息投递成功")
     return response
 
 
@@ -164,12 +205,14 @@ def get_tenant_access_token(config: dict[str, Any]) -> str:
     if not app_id or not app_secret:
         raise ValueError("Feishu app delivery requires app_id and app_secret.")
 
-    token_response = requests.post(
-        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-        json={"app_id": app_id, "app_secret": app_secret},
-        timeout=30,
+    token_response = _retry_request(
+        lambda: requests.post(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": app_id, "app_secret": app_secret},
+            timeout=30,
+        ),
+        label="飞书 token 获取",
     )
-    token_response.raise_for_status()
     tenant_access_token = token_response.json().get("tenant_access_token")
     if not tenant_access_token:
         raise ValueError(f"Missing tenant_access_token: {token_response.text}")

@@ -5,11 +5,11 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .store import load_json, save_json
+from .store import load_json_locked, save_json_locked
 
 
 def load_scheduler_state(path: str | Path) -> dict[str, Any]:
-    return load_json(path, {"sent_dates": {}, "failed_attempts": []})
+    return load_json_locked(path, {"sent_dates": {}, "failed_attempts": []})
 
 
 def should_run_scheduler(
@@ -81,4 +81,4 @@ def record_scheduler_result(
         )
         state["failed_attempts"] = failed_attempts[-20:]
 
-    save_json(path, state)
+    save_json_locked(path, state)
