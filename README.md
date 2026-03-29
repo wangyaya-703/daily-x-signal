@@ -498,6 +498,27 @@ bash scripts/scheduler_tick.sh
 - 账号 ID、绝对本机路径、私有接收目标都不应该写进可提交文件
 - 安装 Skill 本身不会自动获取 X cookies，认证必须额外单独完成
 
+### 防漏扫（本地 + CI）
+
+安装本地 pre-commit 检查：
+
+```bash
+./scripts/security/install_precommit_hook.sh
+```
+
+手动执行扫描：
+
+```bash
+python3 scripts/security/scan_secrets.py --mode repo
+python3 scripts/security/scan_secrets.py --mode history
+```
+
+CI 工作流：
+
+- `.github/workflows/secret-leak-scan.yml`
+- 在 push / PR / 每日定时触发
+- 扫描当前代码和完整 Git 历史
+
 ## Skill
 
 内置 Skill 定义在：
