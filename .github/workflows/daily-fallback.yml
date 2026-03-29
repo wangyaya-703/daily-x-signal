@@ -99,8 +99,8 @@ jobs:
             enabled: true
             provider: openai_compatible
             api_style: responses
-            model: gpt-5.4
-            base_url: ${LLM_BASE_URL:-https://api.openai.com/v1}
+            model: glm-4.7
+            base_url: ${LLM_BASE_URL:-https://ark.cn-beijing.volces.com/api/coding/v3}
             api_key_env: DAILY_X_SIGNAL_API_KEY
           outputs:
             feishu:

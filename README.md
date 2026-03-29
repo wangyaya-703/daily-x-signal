@@ -233,8 +233,8 @@ llm:
   enabled: true
   provider: openai_compatible
   api_style: responses
-  model: gpt-5.4
-  base_url: https://api.openai.com/v1
+  model: glm-4.7
+  base_url: https://ark.cn-beijing.volces.com/api/coding/v3
   api_key: your-local-api-key
 ```
 
