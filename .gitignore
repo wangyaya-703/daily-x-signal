@@ -33,4 +33,5 @@ state/logs/
 
 # One-off local maintenance scripts
 scripts/update_codex_feishu_mcp.py
-.gstack/
+config/local.yaml.bak*
+*.local.yaml.bak*
