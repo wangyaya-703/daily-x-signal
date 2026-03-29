@@ -35,7 +35,7 @@ def should_run_scheduler(
     if digest_date in sent_dates:
         return {"should_run": False, "reason": f"今天 {digest_date} 的日报已经发送过了。", "digest_date": digest_date}
     if current < trigger_at:
-        return {"should_run": False, "reason": "当前还没到 08:30，不执行发送。", "digest_date": digest_date}
+        return {"should_run": False, "reason": f"当前还没到 {trigger_hour:02d}:{trigger_minute:02d}，不执行发送。", "digest_date": digest_date}
     if current > deadline_at:
         return {
             "should_run": False,
